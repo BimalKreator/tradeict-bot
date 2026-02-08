@@ -147,12 +147,11 @@ KUCOIN_SYMBOL_LIMIT = 100
 def _fetch_kucoin_intervals(exchange: ccxt.Exchange) -> dict[str, int]:
     """
     Fetch funding intervals from KuCoin Futures GET /api/v1/contracts/active.
-    Response: { "data": [ { "symbol": "XBTUSDTM", "fundingInterval": 28800 }, ... ] }.
-    fundingInterval is in seconds. Returns dict mapping raw symbol id -> interval_hours (e.g. {'XBTUSDTM': 8}).
+    Priority 1: fundingInterval (seconds). Priority 2: fundingRateGranularity (milliseconds).
+    Returns dict mapping symbol id -> interval_hours (e.g. {'XBTUSDTM': 8, 'API3USDTM': 4}).
     """
     result: dict[str, int] = {}
     try:
-        # CCXT KuCoin Futures: GET /api/v1/contracts/active
         resp = exchange.futurespublic_get_contracts_active()
         data = resp.get("data") if isinstance(resp, dict) else None
         if not isinstance(data, list):
@@ -162,17 +161,36 @@ def _fetch_kucoin_intervals(exchange: ccxt.Exchange) -> dict[str, int]:
             if not isinstance(item, dict):
                 continue
             raw_id = item.get("symbol")
+            if raw_id is None:
+                continue
+            interval_seconds: float | None = None
+            used_field = None
+            raw_val = None
+            # Priority 1: fundingInterval (seconds)
             raw_interval = item.get("fundingInterval")
-            if raw_id is None or raw_interval is None:
+            if raw_interval is not None:
+                try:
+                    interval_seconds = int(float(raw_interval))
+                    used_field = "fundingInterval"
+                    raw_val = raw_interval
+                except (TypeError, ValueError):
+                    pass
+            # Priority 2: fundingRateGranularity (milliseconds)
+            if interval_seconds is None:
+                granularity = item.get("fundingRateGranularity")
+                if granularity is not None:
+                    try:
+                        interval_seconds = int(float(granularity)) / 1000
+                        used_field = "fundingRateGranularity"
+                        raw_val = granularity
+                    except (TypeError, ValueError):
+                        pass
+            if interval_seconds is None or interval_seconds <= 0:
                 continue
-            try:
-                sec = int(float(raw_interval))
-                if sec > 0:
-                    hours = int(sec / 3600)
-                    if hours >= 1:
-                        result[str(raw_id)] = hours
-            except (TypeError, ValueError):
-                continue
+            hours = int(interval_seconds / 3600)
+            if hours >= 1:
+                result[str(raw_id)] = hours
+                print(f"KuCoin {raw_id}: {used_field}={raw_val} -> {hours}h")
         print(f"--> KuCoin intervals loaded: {len(result)} contracts from /contracts/active")
     except Exception as e:
         logger.warning("_fetch_kucoin_intervals failed: %s", e)
