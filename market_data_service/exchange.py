@@ -143,11 +143,48 @@ def _get_usdt_perp_symbols(exchange: ccxt.Exchange) -> list[str]:
 # Max symbols to fetch per exchange when bulk API is not available (avoids timeouts/rate limits)
 KUCOIN_SYMBOL_LIMIT = 100
 
+
+def _fetch_kucoin_intervals(exchange: ccxt.Exchange) -> dict[str, int]:
+    """
+    Fetch funding intervals from KuCoin Futures GET /api/v1/contracts/active.
+    Response: { "data": [ { "symbol": "XBTUSDTM", "fundingInterval": 28800 }, ... ] }.
+    fundingInterval is in seconds. Returns dict mapping raw symbol id -> interval_hours (e.g. {'XBTUSDTM': 8}).
+    """
+    result: dict[str, int] = {}
+    try:
+        # CCXT KuCoin Futures: GET /api/v1/contracts/active
+        resp = exchange.futurespublic_get_contracts_active()
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if not isinstance(data, list):
+            logger.warning("KuCoin contracts/active: unexpected response shape")
+            return result
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            raw_id = item.get("symbol")
+            raw_interval = item.get("fundingInterval")
+            if raw_id is None or raw_interval is None:
+                continue
+            try:
+                sec = int(float(raw_interval))
+                if sec > 0:
+                    hours = int(sec / 3600)
+                    if hours >= 1:
+                        result[str(raw_id)] = hours
+            except (TypeError, ValueError):
+                continue
+        print(f"--> KuCoin intervals loaded: {len(result)} contracts from /contracts/active")
+    except Exception as e:
+        logger.warning("_fetch_kucoin_intervals failed: %s", e)
+    return result
+
+
 def _fetch_kucoin() -> list[dict[str, Any]]:
     """KuCoin futures: no fetch_funding_rates(), use fetch_funding_rate() per symbol (capped)."""
     import time
     exchange = ccxt.kucoinfutures(_get_kucoin_config())
     exchange.load_markets()
+    intervals_map = _fetch_kucoin_intervals(exchange)
     symbols = _get_usdt_perp_symbols(exchange)[:KUCOIN_SYMBOL_LIMIT]
     result = []
     for sym in symbols:
@@ -155,6 +192,17 @@ def _fetch_kucoin() -> list[dict[str, Any]]:
             data = exchange.fetch_funding_rate(sym)
             row = _row(data, sym)
             _enrich_contract_specs(row, exchange, sym, "kucoin")
+            # Override with intervals from GET /contracts/active (keyed by market id)
+            m = exchange.markets.get(sym)
+            if m and intervals_map:
+                raw_id = m.get("id")
+                if raw_id is not None:
+                    interval_h = intervals_map.get(str(raw_id))
+                    if interval_h is not None:
+                        row["funding_interval"] = interval_h
+                        print(f"--> {row['symbol']} kucoin Interval detected: {interval_h}h")
+                    else:
+                        row["funding_interval"] = None  # contract not in response; do not default to 8h
             result.append(row)
             iv = row.get("funding_interval")
             print(f"{row['symbol']} -> KuCoin Interval: {iv}h" if iv is not None else f"{row['symbol']} -> KuCoin Interval: None")
