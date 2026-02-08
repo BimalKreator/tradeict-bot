@@ -48,20 +48,22 @@ def _normalize_symbol(ccxt_symbol: str) -> str:
 
 
 def _row(data: dict, raw_symbol: str) -> dict[str, Any]:
-    """Build one result row from CCXT funding data. Includes funding_interval in hours."""
+    """Build one result row from CCXT funding data. funding_interval in hours (int) or None if unknown."""
     normalized = _normalize_symbol(raw_symbol)
     next_ts = data.get("fundingTimestamp") or data.get("fundingRateTimestamp") or data.get("timestamp")
     next_funding_time = None
     if next_ts:
         next_funding_time = datetime.fromtimestamp(next_ts / 1000.0, tz=timezone.utc).isoformat()
 
-    # Funding interval in hours: (nextFundingTime - timestamp) / 3600000; default 8
-    funding_interval = 8
+    # Funding interval in hours: (nextFundingTime - timestamp) / 3600000. No default; use None if unknown.
+    funding_interval: int | None = None
     ts = data.get("timestamp")
     if next_ts is not None and ts is not None and next_ts > ts:
-        funding_interval = round((next_ts - ts) / 3600000.0) or 8
-    elif isinstance(next_ts, (int, float)) and isinstance(ts, (int, float)):
-        funding_interval = max(1, round((next_ts - ts) / 3600000.0))
+        raw_h = (next_ts - ts) / 3600000.0
+        if raw_h > 0:
+            funding_interval = int(round(raw_h))
+            if funding_interval < 1:
+                funding_interval = 1
 
     return {
         "symbol": normalized,
@@ -72,7 +74,7 @@ def _row(data: dict, raw_symbol: str) -> dict[str, Any]:
 
 
 def _enrich_contract_specs(row: dict[str, Any], exchange: ccxt.Exchange, raw_symbol: str) -> None:
-    """Add min_qty and lot_size from exchange market (in-place)."""
+    """Add min_qty, lot_size, and funding_interval from exchange market (in-place)."""
     m = exchange.markets.get(raw_symbol)
     if not m:
         row["min_qty"] = None
@@ -82,8 +84,22 @@ def _enrich_contract_specs(row: dict[str, Any], exchange: ccxt.Exchange, raw_sym
     amount_limits = limits.get("amount") or {}
     precision = m.get("precision") or {}
     row["min_qty"] = amount_limits.get("min")
-    # lot_size: minimum step for quantity (often same as precision.amount or min)
     row["lot_size"] = precision.get("amount") or amount_limits.get("min")
+
+    # Funding interval from market info (KuCoin/Bybit may provide fundingInterval)
+    info = m.get("info") or {}
+    if isinstance(info, dict):
+        raw_interval = info.get("fundingInterval")
+        if raw_interval is not None:
+            try:
+                val = int(float(raw_interval))
+                # Bybit often returns interval in minutes (e.g. 480 = 8h); KuCoin may use hours
+                if val > 24:
+                    val = val // 60  # assume minutes
+                if val >= 1:
+                    row["funding_interval"] = val
+            except (TypeError, ValueError):
+                pass
 
 
 def _get_usdt_perp_symbols(exchange: ccxt.Exchange) -> list[str]:

@@ -28,21 +28,25 @@ def get_arbitrage_opportunities() -> list[dict[str, Any]]:
         br = bybit_by_symbol[symbol].get("funding_rate")
         if kr is None or br is None:
             continue
+        kucoin_interval = kucoin_by_symbol[symbol].get("funding_interval")
+        bybit_interval = bybit_by_symbol[symbol].get("funding_interval")
+        # Strict interval matching: only pair when both have same funding interval (e.g. 8h vs 8h)
+        if kucoin_interval is None or bybit_interval is None:
+            continue
+        if kucoin_interval != bybit_interval:
+            continue
         gross_spread = abs(kr - br)
         if kr > br:
             action = "KuCoin: Short / Bybit: Long"
         else:
             action = "KuCoin: Long / Bybit: Short"
-        # next_funding_time for sort_by=interval (prefer Bybit, fallback KuCoin)
         next_ft = bybit_by_symbol[symbol].get("next_funding_time") or kucoin_by_symbol[symbol].get("next_funding_time")
-        kucoin_interval = kucoin_by_symbol[symbol].get("funding_interval", 8)
-        bybit_interval = bybit_by_symbol[symbol].get("funding_interval", 8)
         results.append({
             "symbol": symbol,
             "kucoin_rate": kr,
             "bybit_rate": br,
-            "kucoin_funding_interval": kucoin_interval,
-            "bybit_funding_interval": bybit_interval,
+            "kucoin_funding_interval": int(kucoin_interval),
+            "bybit_funding_interval": int(bybit_interval),
             "gross_spread": gross_spread,
             "recommended_action": action,
             "next_funding_time": next_ft,
