@@ -99,6 +99,67 @@
       }
     }
 
+    .card-screener {
+      grid-column: 1 / -1;
+    }
+
+    .screener-wrap {
+      overflow-x: auto;
+      width: 100%;
+    }
+
+    .screener-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+    }
+
+    .screener-table th,
+    .screener-table td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .screener-table th {
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .screener-table tbody tr:hover {
+      background-color: rgba(255, 255, 255, 0.03);
+    }
+
+    .screener-table .fund-positive { color: #22C55E; }
+    .screener-table .fund-negative { color: #EF4444; }
+    .screener-table .action-long { color: #22C55E; }
+    .screener-table .action-short { color: #EF4444; }
+
+    .screener-table input.threshold {
+      width: 5rem;
+      padding: 0.35rem 0.5rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.8125rem;
+    }
+
+    .screener-table input.threshold:focus {
+      outline: none;
+      border-color: #6366F1;
+    }
+
+    .screener-table button.trade-btn {
+      padding: 0.35rem 0.75rem;
+      background: var(--border);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: not-allowed;
+      font-size: 0.8125rem;
+    }
+
     footer {
       margin-top: auto;
       padding: 1rem 0;
@@ -121,9 +182,28 @@
           <h2 class="card-title">Market Data</h2>
           <div class="card-body" id="market-data-status">Loading…</div>
         </section>
-        <section class="card" aria-label="Screener">
+        <section class="card card-screener" aria-label="Screener">
           <h2 class="card-title">Screener</h2>
-          <div class="card-body">—</div>
+          <div class="card-body">
+            <div class="screener-wrap">
+              <div id="screener-status">Loading…</div>
+              <table class="screener-table" id="screener-table" style="display: none;">
+                <thead>
+                  <tr>
+                    <th>Token</th>
+                    <th>KuCoin Funding %</th>
+                    <th>Bybit Funding %</th>
+                    <th>Gross Spread</th>
+                    <th>Min Threshold %</th>
+                    <th>Net Spread</th>
+                    <th>Suggested Action</th>
+                    <th>Trade</th>
+                  </tr>
+                </thead>
+                <tbody id="screener-tbody"></tbody>
+              </table>
+            </div>
+          </div>
         </section>
         <section class="card" aria-label="Trade Engine">
           <h2 class="card-title">Trade Engine</h2>
@@ -154,6 +234,66 @@
         })
         .catch(function (err) {
           el.textContent = 'Failed to load: ' + (err.message || String(err));
+        });
+    })();
+
+    (function () {
+      var statusEl = document.getElementById('screener-status');
+      var tableEl = document.getElementById('screener-table');
+      var tbody = document.getElementById('screener-tbody');
+      var defaultThreshold = 0.01;
+
+      function pct(num) { return (num * 100).toFixed(4); }
+      function fundClass(rate) { return rate >= 0 ? 'fund-positive' : 'fund-negative'; }
+      function actionHtml(action) {
+        var parts = action.split(' / ');
+        return parts.map(function (p) {
+          if (p.indexOf('Short') !== -1) return '<span class="action-short">' + p + '</span>';
+          if (p.indexOf('Long') !== -1) return '<span class="action-long">' + p + '</span>';
+          return p;
+        }).join(' | ');
+      }
+
+      function updateNetSpread(rowIndex, grossSpreadPct, threshold) {
+        var net = (parseFloat(grossSpreadPct) - parseFloat(threshold)).toFixed(4);
+        var cell = tbody.rows[rowIndex].querySelector('.net-spread');
+        if (cell) cell.textContent = net + '%';
+      }
+
+      fetch('/api/screener')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var list = data.opportunities || [];
+          if (list.length === 0) {
+            statusEl.textContent = 'No matched symbols.';
+            return;
+          }
+          statusEl.style.display = 'none';
+          tableEl.style.display = 'table';
+          list.forEach(function (row, i) {
+            var grossPct = pct(row.gross_spread);
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td>' + row.symbol + '</td>' +
+              '<td class="' + fundClass(row.kucoin_rate) + '">' + pct(row.kucoin_rate) + '%</td>' +
+              '<td class="' + fundClass(row.bybit_rate) + '">' + pct(row.bybit_rate) + '%</td>' +
+              '<td>' + grossPct + '%</td>' +
+              '<td><input type="number" class="threshold" step="0.001" min="0" value="' + defaultThreshold + '" data-row="' + i + '" data-gross="' + grossPct + '" aria-label="Min threshold %"></td>' +
+              '<td class="net-spread">' + (parseFloat(grossPct) - defaultThreshold).toFixed(4) + '%</td>' +
+              '<td>' + actionHtml(row.recommended_action) + '</td>' +
+              '<td><button type="button" class="trade-btn" disabled>Wait</button></td>';
+            tbody.appendChild(tr);
+          });
+          tbody.addEventListener('input', function (e) {
+            if (e.target.classList.contains('threshold')) {
+              var row = parseInt(e.target.getAttribute('data-row'), 10);
+              var gross = e.target.getAttribute('data-gross');
+              updateNetSpread(row, gross, e.target.value);
+            }
+          });
+        })
+        .catch(function (err) {
+          statusEl.textContent = 'Failed to load: ' + (err.message || String(err));
         });
     })();
   </script>

@@ -69,3 +69,16 @@ def get_market_data():
         "kucoin": {"symbols_count": data["kucoin"]["symbols_count"], "error": data["kucoin"]["error"]},
         "bybit": {"symbols_count": data["bybit"]["symbols_count"], "error": data["bybit"]["error"]},
     }
+
+
+@app.get("/api/screener")
+def get_screener():
+    """
+    Return funding arbitrage opportunities: symbols on both exchanges with
+    gross spread and recommended action. Sorted by gross spread descending.
+    """
+    from screener_engine.analyzer import get_screener_results
+    results = get_screener_results()
+    # Highest spread first
+    results.sort(key=lambda x: x["gross_spread"], reverse=True)
+    return {"opportunities": results}
