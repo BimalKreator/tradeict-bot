@@ -73,7 +73,12 @@ def _row(data: dict, raw_symbol: str) -> dict[str, Any]:
     }
 
 
-def _enrich_contract_specs(row: dict[str, Any], exchange: ccxt.Exchange, raw_symbol: str) -> None:
+def _enrich_contract_specs(
+    row: dict[str, Any],
+    exchange: ccxt.Exchange,
+    raw_symbol: str,
+    exchange_id: str,
+) -> None:
     """Add min_qty, lot_size, and funding_interval from exchange market (in-place)."""
     m = exchange.markets.get(raw_symbol)
     if not m:
@@ -86,20 +91,24 @@ def _enrich_contract_specs(row: dict[str, Any], exchange: ccxt.Exchange, raw_sym
     row["min_qty"] = amount_limits.get("min")
     row["lot_size"] = precision.get("amount") or amount_limits.get("min")
 
-    # Funding interval from market info (KuCoin/Bybit may provide fundingInterval)
+    # Funding interval from market['info']: KuCoin = seconds, Bybit V5 = minutes
     info = m.get("info") or {}
     if isinstance(info, dict):
         raw_interval = info.get("fundingInterval")
         if raw_interval is not None:
             try:
                 val = int(float(raw_interval))
-                # Bybit often returns interval in minutes (e.g. 480 = 8h); KuCoin may use hours
-                if val > 24:
-                    val = val // 60  # assume minutes
-                if val >= 1:
-                    row["funding_interval"] = val
+                if exchange_id.lower() == "kucoin":
+                    # KuCoin: fundingInterval is in seconds (e.g. 28800 -> 8h)
+                    interval_hours = val / 3600
+                else:
+                    # Bybit V5: fundingInterval is in minutes (e.g. 480 -> 8h)
+                    interval_hours = val / 60
+                if interval_hours >= 1:
+                    row["funding_interval"] = int(interval_hours)
             except (TypeError, ValueError):
                 pass
+    # If still None, _row() may have set it from timestamp math; otherwise stays None
 
 
 def _get_usdt_perp_symbols(exchange: ccxt.Exchange) -> list[str]:
@@ -138,8 +147,10 @@ def _fetch_kucoin() -> list[dict[str, Any]]:
         try:
             data = exchange.fetch_funding_rate(sym)
             row = _row(data, sym)
-            _enrich_contract_specs(row, exchange, sym)
+            _enrich_contract_specs(row, exchange, sym, "kucoin")
             result.append(row)
+            iv = row.get("funding_interval")
+            print(f"{row['symbol']} -> KuCoin Interval: {iv}h" if iv is not None else f"{row['symbol']} -> KuCoin Interval: None")
             time.sleep(0.05)  # avoid rate limit
         except Exception as e:
             logger.warning("Skip %s: %s", sym, e)
@@ -155,8 +166,10 @@ def _fetch_bybit() -> list[dict[str, Any]]:
     result = []
     for raw_symbol, data in funding.items():
         row = _row(data, raw_symbol)
-        _enrich_contract_specs(row, exchange, raw_symbol)
+        _enrich_contract_specs(row, exchange, raw_symbol, "bybit")
         result.append(row)
+        iv = row.get("funding_interval")
+        print(f"{row['symbol']} -> Bybit Interval: {iv}h" if iv is not None else f"{row['symbol']} -> Bybit Interval: None")
     return result
 
 
