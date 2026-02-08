@@ -1,15 +1,10 @@
 """
 Trade Execution Engine: dual-exchange atomic logic with rollback on failure.
 Quantity is in TOKENS (base currency) for perfect hedge; passed directly to ccxt as amount.
-Testing limits: max 5 tokens, max 20 USDT notional.
 """
 from __future__ import annotations
 
 from typing import Any
-
-# Testing phase limits
-MAX_TOKENS = 5.0
-MAX_NOTIONAL_USDT = 20.0
 
 
 class TradeExecutor:
@@ -45,22 +40,10 @@ class TradeExecutor:
         bybit_price = prices.get("bybit_price")
         return kucoin_direction, bybit_direction, kucoin_price, bybit_price
 
-    def _validate_amount_limit(
-        self,
-        quantity: float,
-        kucoin_price: float | None,
-        bybit_price: float | None,
-    ) -> tuple[bool, str]:
-        """quantity = token quantity. Enforce max 5 tokens and max 20 USDT notional."""
+    def _validate_amount_limit(self, quantity: float) -> tuple[bool, str]:
+        """Ensure token quantity is positive. No artificial caps; balance check is the only limit."""
         if quantity <= 0:
             return False, "Token quantity must be positive"
-        if quantity > MAX_TOKENS:
-            return False, f"Token quantity {quantity} exceeds limit ({MAX_TOKENS} tokens)"
-        pk = float(kucoin_price or 0)
-        pb = float(bybit_price or 0)
-        max_price = max(pk, pb)
-        if max_price > 0 and (quantity * max_price) > MAX_NOTIONAL_USDT:
-            return False, f"Notional {quantity * max_price:.2f} USDT exceeds limit ({MAX_NOTIONAL_USDT} USDT)"
         return True, ""
 
     def _validate_balance(
@@ -114,7 +97,7 @@ class TradeExecutor:
         if price_k <= 0 or price_b <= 0:
             return {"success": False, "status": None, "message": "Could not get mark price for symbol", "logs": []}
 
-        ok, msg = self._validate_amount_limit(quantity, kucoin_price, bybit_price)
+        ok, msg = self._validate_amount_limit(quantity)
         if not ok:
             return {"success": False, "status": None, "message": msg, "logs": [msg]}
 

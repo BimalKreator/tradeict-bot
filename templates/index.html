@@ -642,7 +642,7 @@
           <button type="button" class="btn-cancel" id="modal-cancel">Cancel</button>
           <button type="button" class="btn-confirm" id="modal-confirm" disabled>Confirm Trade</button>
         </div>
-        <p class="modal-trade-warning">&#x26a0;&#xfe0f; Real Trade Mode Active (Limit: 5 Tokens / 20 USDT notional)</p>
+        <p class="modal-trade-warning">&#x26a1; Real Trading Active. Ensure sufficient balance.</p>
       </div>
     </div>
   </div>
@@ -864,17 +864,13 @@
         balanceKucoinEl.textContent = formatNum(previewData.kucoin_balance) + ' USDT';
         balanceBybitEl.textContent = formatNum(previewData.bybit_balance) + ' USDT';
 
-        var maxPrice = Math.max(priceK, priceB);
-        var overLimit = qty > 5 || (maxPrice > 0 && qty * maxPrice > 20);
         var insufficient = marginK > previewData.kucoin_balance || marginB > previewData.bybit_balance;
         if (warningEl) {
-          warningEl.classList.toggle('is-visible', insufficient || overLimit);
-          if (qty > 5) warningEl.textContent = 'Max 5 tokens allowed';
-          else if (maxPrice > 0 && qty * maxPrice > 20) warningEl.textContent = 'Notional exceeds 20 USDT limit';
-          else warningEl.textContent = 'Insufficient Balance';
+          warningEl.classList.toggle('is-visible', insufficient);
+          warningEl.textContent = 'Insufficient Balance';
         }
         if (confirmBtn) {
-          confirmBtn.disabled = insufficient || overLimit;
+          confirmBtn.disabled = insufficient;
         }
       }
 
