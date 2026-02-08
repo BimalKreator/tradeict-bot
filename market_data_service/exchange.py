@@ -123,3 +123,37 @@ def fetch_all_market_data() -> dict[str, Any]:
     _MARKET_DATA_CACHE = summary
     _MARKET_DATA_CACHE_TS = now
     return summary
+
+
+def get_mark_prices_for_symbol(normalized_symbol: str) -> dict[str, Any]:
+    """
+    Fetch latest mark/last price for a symbol from KuCoin and Bybit (public).
+    normalized_symbol e.g. "BTC/USDT". Returns { kucoin_price, bybit_price } (None if fetch failed).
+    """
+    # CCXT futures symbol format
+    perp_symbol = normalized_symbol if ":USDT" in normalized_symbol else f"{normalized_symbol}:USDT"
+    result: dict[str, Any] = {"kucoin_price": None, "bybit_price": None}
+
+    for exchange_id, key in (("kucoin", "kucoin_price"), ("bybit", "bybit_price")):
+        try:
+            if exchange_id == "kucoin":
+                ex = ccxt.kucoinfutures()
+            else:
+                ex = ccxt.bybit({"options": {"defaultType": "linear"}})
+            ex.load_markets()
+            if perp_symbol not in ex.markets:
+                # Try to find a matching symbol (e.g. XBT vs BTC)
+                alt = next((s for s in ex.markets if _normalize_symbol(s) == normalized_symbol), None)
+                if alt is None:
+                    continue
+                perp_symbol_use = alt
+            else:
+                perp_symbol_use = perp_symbol
+            ticker = ex.fetch_ticker(perp_symbol_use)
+            # Prefer mark price for futures; fallback to last
+            price = ticker.get("mark") or ticker.get("last")
+            if price is not None:
+                result[key] = float(price)
+        except Exception as e:
+            logger.warning("get_mark_prices %s %s: %s", exchange_id, normalized_symbol, e)
+    return result

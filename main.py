@@ -113,3 +113,29 @@ def get_screener(
         "current_page": page,
         "total_items": total_items,
     }
+
+
+# Mock balances for trade preview UI (no real trading yet)
+TRADE_PREVIEW_MOCK_BALANCE_USDT = 1000.0
+
+
+@app.get("/api/trade-preview/{symbol:path}")
+def get_trade_preview(symbol: str):
+    """
+    Trade preview for a symbol: mark prices and mock balances.
+    Used by the Trade Preview Modal (manual trade UI).
+    """
+    from market_data_service.exchange import get_mark_prices_for_symbol
+
+    symbol = symbol.strip()
+    if not symbol or "/" not in symbol:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Invalid symbol")
+    prices = get_mark_prices_for_symbol(symbol)
+    return {
+        "symbol": symbol,
+        "kucoin_price": prices.get("kucoin_price"),
+        "bybit_price": prices.get("bybit_price"),
+        "kucoin_balance": TRADE_PREVIEW_MOCK_BALANCE_USDT,
+        "bybit_balance": TRADE_PREVIEW_MOCK_BALANCE_USDT,
+    }

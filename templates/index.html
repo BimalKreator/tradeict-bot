@@ -254,11 +254,186 @@
     .screener-table button.trade-btn {
       padding: 0.35rem 0.75rem;
       background: var(--border);
-      color: var(--text-muted);
+      color: var(--text);
       border: 1px solid var(--border);
       border-radius: 6px;
-      cursor: not-allowed;
       font-size: 0.8125rem;
+      cursor: pointer;
+    }
+
+    .screener-table button.trade-btn:hover {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: #6366F1;
+    }
+
+    /* Trade Preview Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .modal-overlay.is-open {
+      display: flex;
+    }
+
+    .modal {
+      background: #121217;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      max-width: 420px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h3 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0.25rem;
+      font-size: 1.25rem;
+      line-height: 1;
+    }
+
+    .modal-close:hover {
+      color: var(--text);
+    }
+
+    .modal-prices {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.5rem;
+      font-size: 0.875rem;
+    }
+
+    .modal-prices span {
+      color: var(--text-muted);
+    }
+
+    .modal-body {
+      padding: 1.25rem;
+    }
+
+    .modal-field {
+      margin-bottom: 1rem;
+    }
+
+    .modal-field label {
+      display: block;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .modal-field input,
+    .modal-field select {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.9375rem;
+    }
+
+    .modal-field input:focus,
+    .modal-field select:focus {
+      outline: none;
+      border-color: #6366F1;
+    }
+
+    .modal-stats {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: var(--bg);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+
+    .modal-stats-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 0.5rem;
+    }
+
+    .modal-stats-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .modal-stats .label { color: var(--text-muted); }
+    .modal-stats .value { color: var(--text); }
+
+    .modal-warning {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      border-radius: 8px;
+      color: #EF4444;
+      font-size: 0.8125rem;
+      display: none;
+    }
+
+    .modal-warning.is-visible {
+      display: block;
+    }
+
+    .modal-actions {
+      margin-top: 1.25rem;
+      display: flex;
+      gap: 0.75rem;
+      justify-content: flex-end;
+    }
+
+    .modal-actions button {
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      border: 1px solid var(--border);
+    }
+
+    .modal-actions .btn-cancel {
+      background: var(--card);
+      color: var(--text);
+    }
+
+    .modal-actions .btn-confirm {
+      background: #6366F1;
+      color: #fff;
+      border-color: #6366F1;
+    }
+
+    .modal-actions .btn-confirm:hover:not(:disabled) {
+      background: #4F46E5;
+    }
+
+    .modal-actions .btn-confirm:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
     footer {
@@ -339,6 +514,60 @@
       Dashboard loaded. No trading logic yet.
     </footer>
   </div>
+
+  <div class="modal-overlay" id="trade-preview-overlay" aria-hidden="true">
+    <div class="modal" id="trade-preview-modal" role="dialog" aria-labelledby="trade-preview-title">
+      <div class="modal-header">
+        <div>
+          <h3 id="trade-preview-title">Trade Preview</h3>
+          <div class="modal-prices" id="modal-prices">
+            <span>KuCoin: <strong id="modal-kucoin-price">—</strong></span>
+            <span>Bybit: <strong id="modal-bybit-price">—</strong></span>
+          </div>
+        </div>
+        <button type="button" class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="modal-leverage">Leverage</label>
+          <select id="modal-leverage" aria-label="Leverage">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="5">5x</option>
+            <option value="10">10x</option>
+          </select>
+        </div>
+        <div class="modal-field">
+          <label for="modal-quantity">Quantity (USDT)</label>
+          <input type="number" id="modal-quantity" min="0" step="1" value="100" placeholder="USDT amount" aria-label="Quantity USDT">
+        </div>
+        <div class="modal-stats">
+          <div class="modal-stats-row">
+            <span class="label">Margin Required (KuCoin)</span>
+            <span class="value" id="modal-margin-kucoin">—</span>
+          </div>
+          <div class="modal-stats-row">
+            <span class="label">Available Balance (KuCoin)</span>
+            <span class="value" id="modal-balance-kucoin">—</span>
+          </div>
+          <div class="modal-stats-row">
+            <span class="label">Margin Required (Bybit)</span>
+            <span class="value" id="modal-margin-bybit">—</span>
+          </div>
+          <div class="modal-stats-row">
+            <span class="label">Available Balance (Bybit)</span>
+            <span class="value" id="modal-balance-bybit">—</span>
+          </div>
+        </div>
+        <div class="modal-warning" id="modal-warning">Insufficient Balance</div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" id="modal-cancel">Cancel</button>
+          <button type="button" class="btn-confirm" id="modal-confirm" disabled>Confirm Trade</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     (function () {
       var el = document.getElementById('market-data-status');
@@ -437,6 +666,7 @@
               var net = (parseFloat(grossPct) - threshold).toFixed(4);
               var tr = document.createElement('tr');
               tr.setAttribute('data-gross', grossPct);
+              tr.setAttribute('data-symbol', row.symbol);
               tr.innerHTML =
                 '<td>' + row.symbol + '</td>' +
                 '<td class="' + fundClass(row.kucoin_rate) + '">' + pct(row.kucoin_rate) + '%</td>' +
@@ -444,7 +674,7 @@
                 '<td>' + grossPct + '%</td>' +
                 '<td class="net-spread">' + net + '%</td>' +
                 '<td>' + actionHtml(row.recommended_action) + '</td>' +
-                '<td><button type="button" class="trade-btn" disabled>Wait</button></td>';
+                '<td><button type="button" class="trade-btn">Trade</button></td>';
               tbody.appendChild(tr);
             });
 
@@ -480,7 +710,107 @@
       }
       if (sortSelect) sortSelect.addEventListener('change', function () { fetchScreenerData(1); });
 
+      tbody.addEventListener('click', function (e) {
+        var btn = e.target.closest('.trade-btn');
+        if (!btn) return;
+        var row = e.target.closest('tr');
+        var symbol = row && row.getAttribute('data-symbol');
+        if (symbol) window.openTradePreview(symbol);
+      });
+
       fetchScreenerData(1);
+    })();
+
+    (function () {
+      var overlay = document.getElementById('trade-preview-overlay');
+      var modal = document.getElementById('trade-preview-modal');
+      var titleEl = document.getElementById('trade-preview-title');
+      var kucoinPriceEl = document.getElementById('modal-kucoin-price');
+      var bybitPriceEl = document.getElementById('modal-bybit-price');
+      var leverageSelect = document.getElementById('modal-leverage');
+      var quantityInput = document.getElementById('modal-quantity');
+      var marginKucoinEl = document.getElementById('modal-margin-kucoin');
+      var marginBybitEl = document.getElementById('modal-margin-bybit');
+      var balanceKucoinEl = document.getElementById('modal-balance-kucoin');
+      var balanceBybitEl = document.getElementById('modal-balance-bybit');
+      var warningEl = document.getElementById('modal-warning');
+      var confirmBtn = document.getElementById('modal-confirm');
+      var closeBtn = document.getElementById('modal-close');
+      var cancelBtn = document.getElementById('modal-cancel');
+
+      var previewData = { symbol: '', kucoin_balance: 0, bybit_balance: 0 };
+
+      function formatNum(n) {
+        if (n == null || isNaN(n)) return '—';
+        return Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+      }
+
+      function updateMarginAndValidation() {
+        var qty = parseFloat(quantityInput.value) || 0;
+        var lev = parseInt(leverageSelect.value, 10) || 1;
+        var margin = lev > 0 ? qty / lev : 0;
+        marginKucoinEl.textContent = formatNum(margin) + ' USDT';
+        marginBybitEl.textContent = formatNum(margin) + ' USDT';
+        balanceKucoinEl.textContent = formatNum(previewData.kucoin_balance) + ' USDT';
+        balanceBybitEl.textContent = formatNum(previewData.bybit_balance) + ' USDT';
+
+        var insufficient = margin > previewData.kucoin_balance || margin > previewData.bybit_balance;
+        if (warningEl) {
+          warningEl.classList.toggle('is-visible', insufficient);
+        }
+        if (confirmBtn) {
+          confirmBtn.disabled = insufficient;
+        }
+      }
+
+      function openTradePreview(symbol) {
+        previewData = { symbol: symbol, kucoin_balance: 0, bybit_balance: 0 };
+        titleEl.textContent = 'Trade Preview — ' + symbol;
+        kucoinPriceEl.textContent = '—';
+        bybitPriceEl.textContent = '—';
+        leverageSelect.value = '1';
+        quantityInput.value = '100';
+        marginKucoinEl.textContent = '—';
+        marginBybitEl.textContent = '—';
+        balanceKucoinEl.textContent = '—';
+        balanceBybitEl.textContent = '—';
+        warningEl.classList.remove('is-visible');
+        confirmBtn.disabled = true;
+        overlay.classList.add('is-open');
+        overlay.setAttribute('aria-hidden', 'false');
+
+        var pathSymbol = encodeURIComponent(symbol);
+        fetch('/api/trade-preview/' + pathSymbol)
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            previewData.symbol = data.symbol || symbol;
+            previewData.kucoin_balance = data.kucoin_balance != null ? data.kucoin_balance : 0;
+            previewData.bybit_balance = data.bybit_balance != null ? data.bybit_balance : 0;
+            kucoinPriceEl.textContent = formatNum(data.kucoin_price) + (data.kucoin_price != null ? '' : ' (unavailable)');
+            bybitPriceEl.textContent = formatNum(data.bybit_price) + (data.bybit_price != null ? '' : ' (unavailable)');
+            updateMarginAndValidation();
+          })
+          .catch(function () {
+            kucoinPriceEl.textContent = 'Error';
+            bybitPriceEl.textContent = 'Error';
+            updateMarginAndValidation();
+          });
+      }
+
+      function closeModal() {
+        overlay.classList.remove('is-open');
+        overlay.setAttribute('aria-hidden', 'true');
+      }
+
+      if (leverageSelect) leverageSelect.addEventListener('change', updateMarginAndValidation);
+      if (quantityInput) quantityInput.addEventListener('input', updateMarginAndValidation);
+      if (closeBtn) closeBtn.addEventListener('click', closeModal);
+      if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) closeModal();
+      });
+
+      window.openTradePreview = openTradePreview;
     })();
   </script>
 </body>
