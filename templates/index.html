@@ -53,6 +53,17 @@
       color: var(--text-muted);
     }
 
+    .navbar-logo {
+      height: 45px;
+      width: auto;
+      transition: all 0.3s ease;
+    }
+    @media (max-width: 768px) {
+      .navbar-logo {
+        height: 35px;
+      }
+    }
+
     main {
       flex: 1;
       display: flex;
@@ -496,7 +507,7 @@
 <body>
   <div class="app">
     <header>
-      <h1>Tradeict Earner</h1>
+      <img src="/static/logo.png" alt="Tradeict Logo" class="navbar-logo">
       <p class="subtitle">Kucoin & Bybit — Phase 0</p>
     </header>
 
@@ -642,7 +653,7 @@
           <button type="button" class="btn-cancel" id="modal-cancel">Cancel</button>
           <button type="button" class="btn-confirm" id="modal-confirm" disabled>Confirm Trade</button>
         </div>
-        <p class="modal-trade-warning">&#x26a1; Real Trading Active. Ensure sufficient balance.</p>
+        <p class="modal-trade-warning"><small class="text-muted">&#x26a1; Market Order | No Quantity Limit</small></p>
       </div>
     </div>
   </div>
