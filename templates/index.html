@@ -436,6 +436,28 @@
       cursor: not-allowed;
     }
 
+    .modal-field-checkbox { margin-bottom: 0.5rem; }
+    .modal-field-checkbox .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    .modal-field-checkbox .checkbox-label input { accent-color: #6366F1; }
+    .modal-actions { flex-wrap: wrap; align-items: center; }
+    .modal-spinner { font-size: 0.875rem; color: var(--text-muted); margin-right: 0.5rem; }
+
+    .recent-trades-card { grid-column: 1 / -1; }
+    .recent-trades-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+    .recent-trades-table th,
+    .recent-trades-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+    .recent-trades-table th { color: var(--text-muted); font-weight: 500; }
+    .recent-trades-table .status-open { color: #22C55E; }
+    .recent-trades-table .status-failed { color: #EF4444; }
+    .recent-trades-table .status-closed { color: var(--text-muted); }
+
     footer {
       margin-top: auto;
       padding: 1rem 0;
@@ -507,6 +529,26 @@
           <h2 class="card-title">Status</h2>
           <div class="card-body">—</div>
         </section>
+        <section class="card recent-trades-card" aria-label="Recent Trades">
+          <h2 class="card-title">Recent Trades</h2>
+          <div class="card-body">
+            <div id="recent-trades-status">Loading…</div>
+            <table class="recent-trades-table" id="recent-trades-table" style="display: none;">
+              <thead>
+                <tr>
+                  <th>Token</th>
+                  <th>Entry Time</th>
+                  <th>Quantity</th>
+                  <th>Leverage</th>
+                  <th>KuCoin</th>
+                  <th>Bybit</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="recent-trades-tbody"></tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </main>
 
@@ -560,7 +602,14 @@
           </div>
         </div>
         <div class="modal-warning" id="modal-warning">Insufficient Balance</div>
+        <div class="modal-field modal-field-checkbox">
+          <label class="checkbox-label">
+            <input type="checkbox" id="modal-simulate-failure" aria-label="Simulate network failure">
+            <span>🔴 Simulate Network Failure (Test Rollback)</span>
+          </label>
+        </div>
         <div class="modal-actions">
+          <span class="modal-spinner" id="modal-spinner" style="display: none;">Processing…</span>
           <button type="button" class="btn-cancel" id="modal-cancel">Cancel</button>
           <button type="button" class="btn-confirm" id="modal-confirm" disabled>Confirm Trade</button>
         </div>
@@ -810,7 +859,88 @@
         if (e.target === overlay) closeModal();
       });
 
+      var spinnerEl = document.getElementById('modal-spinner');
+      var simulateFailureCheckbox = document.getElementById('modal-simulate-failure');
+
+      confirmBtn.addEventListener('click', function () {
+        if (confirmBtn.disabled) return;
+        var symbol = previewData.symbol;
+        var quantity = parseFloat(quantityInput.value) || 0;
+        var leverage = parseInt(leverageSelect.value, 10) || 1;
+        var simulateFailure = simulateFailureCheckbox && simulateFailureCheckbox.checked;
+        if (spinnerEl) spinnerEl.style.display = 'inline';
+        confirmBtn.disabled = true;
+        fetch('/api/execute-trade', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbol: symbol, quantity: quantity, leverage: leverage, simulate_failure: simulateFailure })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            if (spinnerEl) spinnerEl.style.display = 'none';
+            confirmBtn.disabled = false;
+            closeModal();
+            if (res.success) {
+              alert('Trade Successful \u2705');
+            } else {
+              alert('Trade Failed! First Order Rolled Back \u26a0\ufe0f');
+            }
+            if (window.fetchRecentTrades) window.fetchRecentTrades();
+          })
+          .catch(function (err) {
+            if (spinnerEl) spinnerEl.style.display = 'none';
+            confirmBtn.disabled = false;
+            alert('Request failed: ' + (err.message || String(err)));
+          });
+      });
+
       window.openTradePreview = openTradePreview;
+    })();
+
+    (function () {
+      var statusEl = document.getElementById('recent-trades-status');
+      var tableEl = document.getElementById('recent-trades-table');
+      var tbody = document.getElementById('recent-trades-tbody');
+
+      function fetchRecentTrades() {
+        fetch('/api/trades?limit=5')
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            var list = data.trades || [];
+            if (list.length === 0) {
+              statusEl.textContent = 'No trades yet.';
+              statusEl.style.display = 'block';
+              tableEl.style.display = 'none';
+              return;
+            }
+            statusEl.style.display = 'none';
+            tableEl.style.display = 'table';
+            tbody.innerHTML = '';
+            list.forEach(function (t) {
+              var tr = document.createElement('tr');
+              var entryTime = t.entry_time ? t.entry_time.replace('T', ' ').slice(0, 19) : '—';
+              var statusClass = 'status-open';
+              if (t.status === 'FAILED_ROLLBACK') statusClass = 'status-failed';
+              else if (t.status === 'CLOSED') statusClass = 'status-closed';
+              tr.innerHTML =
+                '<td>' + (t.token_group_id || '—') + '</td>' +
+                '<td>' + entryTime + '</td>' +
+                '<td>' + (t.quantity != null ? t.quantity : '—') + '</td>' +
+                '<td>' + (t.leverage != null ? t.leverage + 'x' : '—') + '</td>' +
+                '<td>' + (t.kucoin_direction || '—') + '</td>' +
+                '<td>' + (t.bybit_direction || '—') + '</td>' +
+                '<td class="' + statusClass + '">' + (t.status || '—') + '</td>';
+              tbody.appendChild(tr);
+            });
+          })
+          .catch(function () {
+            statusEl.textContent = 'Failed to load trades.';
+            statusEl.style.display = 'block';
+          });
+      }
+
+      window.fetchRecentTrades = fetchRecentTrades;
+      fetchRecentTrades();
     })();
   </script>
 </body>

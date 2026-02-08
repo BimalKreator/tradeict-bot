@@ -1,15 +1,43 @@
 """
-Exchange market data via CCXT (public endpoints only).
-Fetches USDT perpetuals: symbol, funding rate, next funding time.
+Exchange market data via CCXT. Uses API keys from .env when set for private data (balances).
+Fetches USDT perpetuals: symbol, funding rate, next funding time, min_qty, lot_size.
 Normalizes symbols to BASE/USDT (e.g. BTC/USDT).
 """
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
 import ccxt
 
 logger = logging.getLogger(__name__)
+
+# Options for proper Futures/Swap handling
+DEFAULT_OPTIONS = {"defaultType": "swap"}
+
+
+def _get_kucoin_config() -> dict[str, Any]:
+    """Build KuCoin Futures config from env. Uses API keys if set."""
+    config: dict[str, Any] = {"options": {**DEFAULT_OPTIONS}}
+    api_key = os.environ.get("KUCOIN_API_KEY", "").strip()
+    secret = os.environ.get("KUCOIN_SECRET", "").strip()
+    passphrase = os.environ.get("KUCOIN_PASSPHRASE", "").strip()
+    if api_key and secret and passphrase:
+        config["apiKey"] = api_key
+        config["secret"] = secret
+        config["password"] = passphrase
+    return config
+
+
+def _get_bybit_config() -> dict[str, Any]:
+    """Build Bybit config from env (linear = USDT perpetual). Uses API keys if set."""
+    config: dict[str, Any] = {"options": {"defaultType": "linear"}}
+    api_key = os.environ.get("BYBIT_API_KEY", "").strip()
+    secret = os.environ.get("BYBIT_SECRET", "").strip()
+    if api_key and secret:
+        config["apiKey"] = api_key
+        config["secret"] = secret
+    return config
 
 # Normalize CCXT symbol (e.g. "BTC/USDT:USDT" or "XBT/USDT:USDT") to "BTC/USDT" / "XBT/USDT"
 def _normalize_symbol(ccxt_symbol: str) -> str:
@@ -33,6 +61,21 @@ def _row(data: dict, raw_symbol: str) -> dict[str, Any]:
     }
 
 
+def _enrich_contract_specs(row: dict[str, Any], exchange: ccxt.Exchange, raw_symbol: str) -> None:
+    """Add min_qty and lot_size from exchange market (in-place)."""
+    m = exchange.markets.get(raw_symbol)
+    if not m:
+        row["min_qty"] = None
+        row["lot_size"] = None
+        return
+    limits = m.get("limits") or {}
+    amount_limits = limits.get("amount") or {}
+    precision = m.get("precision") or {}
+    row["min_qty"] = amount_limits.get("min")
+    # lot_size: minimum step for quantity (often same as precision.amount or min)
+    row["lot_size"] = precision.get("amount") or amount_limits.get("min")
+
+
 def _get_usdt_perp_symbols(exchange: ccxt.Exchange) -> list[str]:
     """Filter exchange markets to USDT-margined perpetuals."""
     usdt_perp_symbols = []
@@ -50,14 +93,16 @@ KUCOIN_SYMBOL_LIMIT = 100
 def _fetch_kucoin() -> list[dict[str, Any]]:
     """KuCoin futures: no fetch_funding_rates(), use fetch_funding_rate() per symbol (capped)."""
     import time
-    exchange = ccxt.kucoinfutures()
+    exchange = ccxt.kucoinfutures(_get_kucoin_config())
     exchange.load_markets()
     symbols = _get_usdt_perp_symbols(exchange)[:KUCOIN_SYMBOL_LIMIT]
     result = []
     for sym in symbols:
         try:
             data = exchange.fetch_funding_rate(sym)
-            result.append(_row(data, sym))
+            row = _row(data, sym)
+            _enrich_contract_specs(row, exchange, sym)
+            result.append(row)
             time.sleep(0.05)  # avoid rate limit
         except Exception as e:
             logger.warning("Skip %s: %s", sym, e)
@@ -66,11 +111,16 @@ def _fetch_kucoin() -> list[dict[str, Any]]:
 
 def _fetch_bybit() -> list[dict[str, Any]]:
     """Bybit: supports fetch_funding_rates() for all symbols."""
-    exchange = ccxt.bybit({"options": {"defaultType": "linear"}})
+    exchange = ccxt.bybit(_get_bybit_config())
     exchange.load_markets()
     symbols = _get_usdt_perp_symbols(exchange)
     funding = exchange.fetch_funding_rates(symbols)
-    return [_row(data, raw_symbol) for raw_symbol, data in funding.items()]
+    result = []
+    for raw_symbol, data in funding.items():
+        row = _row(data, raw_symbol)
+        _enrich_contract_specs(row, exchange, raw_symbol)
+        result.append(row)
+    return result
 
 
 def _fetch_usdt_perpetuals_for_exchange(exchange_id: str) -> list[dict[str, Any]]:
@@ -137,9 +187,9 @@ def get_mark_prices_for_symbol(normalized_symbol: str) -> dict[str, Any]:
     for exchange_id, key in (("kucoin", "kucoin_price"), ("bybit", "bybit_price")):
         try:
             if exchange_id == "kucoin":
-                ex = ccxt.kucoinfutures()
+                ex = ccxt.kucoinfutures(_get_kucoin_config())
             else:
-                ex = ccxt.bybit({"options": {"defaultType": "linear"}})
+                ex = ccxt.bybit(_get_bybit_config())
             ex.load_markets()
             if perp_symbol not in ex.markets:
                 # Try to find a matching symbol (e.g. XBT vs BTC)
@@ -156,4 +206,55 @@ def get_mark_prices_for_symbol(normalized_symbol: str) -> dict[str, Any]:
                 result[key] = float(price)
         except Exception as e:
             logger.warning("get_mark_prices %s %s: %s", exchange_id, normalized_symbol, e)
+    return result
+
+
+def get_wallet_balance(exchange_name: str) -> dict[str, Any]:
+    """
+    Fetch wallet balance (Unified/Futures) for the given exchange.
+    Returns: total_wallet_balance, available_balance, unrealized_pnl (USDT).
+    If keys are missing or auth fails, returns zeros and optional error message (no exception).
+    """
+    result: dict[str, Any] = {
+        "total_wallet_balance": 0.0,
+        "available_balance": 0.0,
+        "unrealized_pnl": 0.0,
+        "error": None,
+    }
+    try:
+        if exchange_name.lower() == "kucoin":
+            config = _get_kucoin_config()
+            if not config.get("apiKey"):
+                result["error"] = "API keys not configured"
+                return result
+            exchange = ccxt.kucoinfutures(config)
+        elif exchange_name.lower() == "bybit":
+            config = _get_bybit_config()
+            if not config.get("apiKey"):
+                result["error"] = "API keys not configured"
+                return result
+            exchange = ccxt.bybit(config)
+        else:
+            result["error"] = f"Unknown exchange: {exchange_name}"
+            return result
+
+        balance = exchange.fetch_balance()
+        # CCXT: balance['USDT'] has 'total', 'free', 'used'; futures may have 'info' with unrealizedPnl
+        usdt = balance.get("USDT") or balance.get("usdt") or {}
+        if isinstance(usdt, dict):
+            result["total_wallet_balance"] = float(usdt.get("total") or 0)
+            result["available_balance"] = float(usdt.get("free") or 0)
+            result["unrealized_pnl"] = float(usdt.get("unrealizedPnl") or usdt.get("unrealized_pnl") or 0)
+        # Some exchanges put unrealized PnL in balance.info
+        info = balance.get("info") or {}
+        if isinstance(info, dict):
+            upnl = info.get("unrealisedPnl") or info.get("unrealizedPnl")
+            if upnl is not None:
+                result["unrealized_pnl"] = float(upnl)
+    except Exception as e:
+        logger.warning("get_wallet_balance %s: %s", exchange_name, e)
+        result["error"] = str(e)
+        result["total_wallet_balance"] = 0.0
+        result["available_balance"] = 0.0
+        result["unrealized_pnl"] = 0.0
     return result
