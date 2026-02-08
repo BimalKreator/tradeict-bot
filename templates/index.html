@@ -560,7 +560,7 @@
                 <tr>
                   <th>Token</th>
                   <th>Entry Time</th>
-                  <th>Quantity</th>
+                  <th>Qty (Tokens)</th>
                   <th>Leverage</th>
                   <th>KuCoin</th>
                   <th>Bybit</th>
@@ -602,8 +602,8 @@
           </select>
         </div>
         <div class="modal-field">
-          <label for="modal-quantity">Quantity (USDT)</label>
-          <input type="number" id="modal-quantity" min="0" max="20" step="1" value="10" placeholder="USDT amount (max 20)" aria-label="Quantity USDT">
+          <label for="modal-quantity">Quantity (Tokens)</label>
+          <input type="number" id="modal-quantity" min="0" max="5" step="0.01" value="1" placeholder="e.g. 1" aria-label="Quantity in tokens">
         </div>
         <div class="modal-stats">
           <div class="modal-stats-row">
@@ -635,7 +635,7 @@
           <button type="button" class="btn-cancel" id="modal-cancel">Cancel</button>
           <button type="button" class="btn-confirm" id="modal-confirm" disabled>Confirm Trade</button>
         </div>
-        <p class="modal-trade-warning">&#x26a0;&#xfe0f; Real Trade Mode Active (Limit: 20 USDT)</p>
+        <p class="modal-trade-warning">&#x26a0;&#xfe0f; Real Trade Mode Active (Limit: 5 Tokens / 20 USDT notional)</p>
       </div>
     </div>
   </div>
@@ -836,7 +836,7 @@
       var closeBtn = document.getElementById('modal-close');
       var cancelBtn = document.getElementById('modal-cancel');
 
-      var previewData = { symbol: '', kucoin_balance: 0, bybit_balance: 0 };
+      var previewData = { symbol: '', kucoin_balance: 0, bybit_balance: 0, kucoin_price: null, bybit_price: null };
 
       function formatNum(n) {
         if (n == null || isNaN(n)) return '—';
@@ -846,17 +846,23 @@
       function updateMarginAndValidation() {
         var qty = parseFloat(quantityInput.value) || 0;
         var lev = parseInt(leverageSelect.value, 10) || 1;
-        var margin = lev > 0 ? qty / lev : 0;
-        marginKucoinEl.textContent = formatNum(margin) + ' USDT';
-        marginBybitEl.textContent = formatNum(margin) + ' USDT';
+        var priceK = parseFloat(previewData.kucoin_price) || 0;
+        var priceB = parseFloat(previewData.bybit_price) || 0;
+        var marginK = (lev > 0 && priceK > 0) ? (qty * priceK) / lev : 0;
+        var marginB = (lev > 0 && priceB > 0) ? (qty * priceB) / lev : 0;
+        marginKucoinEl.textContent = formatNum(marginK) + ' USDT';
+        marginBybitEl.textContent = formatNum(marginB) + ' USDT';
         balanceKucoinEl.textContent = formatNum(previewData.kucoin_balance) + ' USDT';
         balanceBybitEl.textContent = formatNum(previewData.bybit_balance) + ' USDT';
 
-        var overLimit = qty > 20;
-        var insufficient = margin > previewData.kucoin_balance || margin > previewData.bybit_balance;
+        var maxPrice = Math.max(priceK, priceB);
+        var overLimit = qty > 5 || (maxPrice > 0 && qty * maxPrice > 20);
+        var insufficient = marginK > previewData.kucoin_balance || marginB > previewData.bybit_balance;
         if (warningEl) {
           warningEl.classList.toggle('is-visible', insufficient || overLimit);
-          warningEl.textContent = overLimit ? 'Quantity exceeds 20 USDT limit' : 'Insufficient Balance';
+          if (qty > 5) warningEl.textContent = 'Max 5 tokens allowed';
+          else if (maxPrice > 0 && qty * maxPrice > 20) warningEl.textContent = 'Notional exceeds 20 USDT limit';
+          else warningEl.textContent = 'Insufficient Balance';
         }
         if (confirmBtn) {
           confirmBtn.disabled = insufficient || overLimit;
@@ -864,12 +870,12 @@
       }
 
       function openTradePreview(symbol) {
-        previewData = { symbol: symbol, kucoin_balance: 0, bybit_balance: 0 };
+        previewData = { symbol: symbol, kucoin_balance: 0, bybit_balance: 0, kucoin_price: null, bybit_price: null };
         titleEl.textContent = 'Trade Preview — ' + symbol;
         kucoinPriceEl.textContent = '—';
         bybitPriceEl.textContent = '—';
         leverageSelect.value = '1';
-        quantityInput.value = '10';
+        quantityInput.value = '1';
         marginKucoinEl.textContent = '—';
         marginBybitEl.textContent = '—';
         balanceKucoinEl.textContent = '—';
@@ -886,6 +892,8 @@
             previewData.symbol = data.symbol || symbol;
             previewData.kucoin_balance = data.kucoin_balance != null ? data.kucoin_balance : 0;
             previewData.bybit_balance = data.bybit_balance != null ? data.bybit_balance : 0;
+            previewData.kucoin_price = data.kucoin_price;
+            previewData.bybit_price = data.bybit_price;
             kucoinPriceEl.textContent = formatNum(data.kucoin_price) + (data.kucoin_price != null ? '' : ' (unavailable)');
             bybitPriceEl.textContent = formatNum(data.bybit_price) + (data.bybit_price != null ? '' : ' (unavailable)');
             updateMarginAndValidation();

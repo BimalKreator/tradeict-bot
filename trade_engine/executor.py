@@ -1,53 +1,25 @@
 """
 Trade Execution Engine: dual-exchange atomic logic with rollback on failure.
-Performs REAL trades via ccxt when simulate_failure is False. Testing limit: 20 USDT.
+Quantity is in TOKENS (base currency) for perfect hedge; passed directly to ccxt as amount.
+Testing limits: max 5 tokens, max 20 USDT notional.
 """
 from __future__ import annotations
 
 from typing import Any
 
-# Hard limit for testing phase (USDT per order)
-MAX_ORDER_USDT = 20.0
+# Testing phase limits
+MAX_TOKENS = 5.0
+MAX_NOTIONAL_USDT = 20.0
 
 
 class TradeExecutor:
     """
-    Executes dual trades (KuCoin then Bybit). If Bybit fails, closes KuCoin position (rollback).
-    Real orders via ccxt when simulate_failure is False.
+    Executes dual trades (KuCoin then Bybit). quantity = token quantity (same on both exchanges).
+    If Bybit fails, closes KuCoin position (rollback).
     """
 
     def __init__(self) -> None:
         pass
-
-    def _required_margin(self, quantity: float, leverage: int) -> float:
-        if leverage <= 0:
-            return float("inf")
-        return quantity / leverage
-
-    def _validate_balance(self, quantity: float, leverage: int) -> tuple[bool, str]:
-        from market_data_service.exchange import get_wallet_balance
-
-        margin = self._required_margin(quantity, leverage)
-        kucoin = get_wallet_balance("kucoin")
-        bybit = get_wallet_balance("bybit")
-        if kucoin.get("error"):
-            return False, f"KuCoin: {kucoin['error']}"
-        if bybit.get("error"):
-            return False, f"Bybit: {bybit['error']}"
-        avail_k = float(kucoin.get("available_balance") or 0)
-        avail_b = float(bybit.get("available_balance") or 0)
-        if margin > avail_k:
-            return False, f"Insufficient balance: margin {margin} > KuCoin available {avail_k} USDT"
-        if margin > avail_b:
-            return False, f"Insufficient balance: margin {margin} > Bybit available {avail_b} USDT"
-        return True, ""
-
-    def _validate_amount_limit(self, quantity: float) -> tuple[bool, str]:
-        if quantity > MAX_ORDER_USDT:
-            return False, f"Order size {quantity} USDT exceeds testing limit ({MAX_ORDER_USDT} USDT)"
-        if quantity <= 0:
-            return False, "Order size must be positive"
-        return True, ""
 
     def _get_directions_and_prices(self, symbol: str) -> tuple[str, str, float | None, float | None]:
         """Get kucoin_direction, bybit_direction, kucoin_entry_price, bybit_entry_price."""
@@ -73,6 +45,55 @@ class TradeExecutor:
         bybit_price = prices.get("bybit_price")
         return kucoin_direction, bybit_direction, kucoin_price, bybit_price
 
+    def _validate_amount_limit(
+        self,
+        quantity: float,
+        kucoin_price: float | None,
+        bybit_price: float | None,
+    ) -> tuple[bool, str]:
+        """quantity = token quantity. Enforce max 5 tokens and max 20 USDT notional."""
+        if quantity <= 0:
+            return False, "Token quantity must be positive"
+        if quantity > MAX_TOKENS:
+            return False, f"Token quantity {quantity} exceeds limit ({MAX_TOKENS} tokens)"
+        pk = float(kucoin_price or 0)
+        pb = float(bybit_price or 0)
+        max_price = max(pk, pb)
+        if max_price > 0 and (quantity * max_price) > MAX_NOTIONAL_USDT:
+            return False, f"Notional {quantity * max_price:.2f} USDT exceeds limit ({MAX_NOTIONAL_USDT} USDT)"
+        return True, ""
+
+    def _validate_balance(
+        self,
+        quantity: float,
+        leverage: int,
+        kucoin_price: float | None,
+        bybit_price: float | None,
+    ) -> tuple[bool, str]:
+        """Margin = (Token Quantity * Mark Price) / Leverage. Must be <= available balance on each."""
+        from market_data_service.exchange import get_wallet_balance
+
+        pk = float(kucoin_price or 0)
+        pb = float(bybit_price or 0)
+        if pk <= 0 or pb <= 0:
+            return False, "Could not get mark price"
+        margin_k = (quantity * pk) / leverage if leverage > 0 else float("inf")
+        margin_b = (quantity * pb) / leverage if leverage > 0 else float("inf")
+
+        kucoin = get_wallet_balance("kucoin")
+        bybit = get_wallet_balance("bybit")
+        if kucoin.get("error"):
+            return False, f"KuCoin: {kucoin['error']}"
+        if bybit.get("error"):
+            return False, f"Bybit: {bybit['error']}"
+        avail_k = float(kucoin.get("available_balance") or 0)
+        avail_b = float(bybit.get("available_balance") or 0)
+        if margin_k > avail_k:
+            return False, f"Insufficient balance: margin {margin_k:.2f} > KuCoin available {avail_k:.2f} USDT"
+        if margin_b > avail_b:
+            return False, f"Insufficient balance: margin {margin_b:.2f} > Bybit available {avail_b:.2f} USDT"
+        return True, ""
+
     def execute_dual_trade(
         self,
         symbol: str,
@@ -81,56 +102,52 @@ class TradeExecutor:
         simulate_failure: bool = False,
     ) -> dict[str, Any]:
         """
-        Execute order on KuCoin (A) then Bybit (B). Real orders via ccxt unless simulate_failure.
-        Safety: quantity must be <= 20 USDT. If B fails, close A position (rollback).
+        quantity = token quantity (e.g. 1 API3, 10 XRP). Passed directly as amount to create_market_order.
         """
         from market_data_service.exchange import close_position, place_market_order
 
         import database
 
-        ok, msg = self._validate_amount_limit(quantity)
-        if not ok:
-            return {"success": False, "status": None, "message": msg, "logs": [msg]}
-
-        ok, msg = self._validate_balance(quantity, leverage)
-        if not ok:
-            return {"success": False, "status": None, "message": msg, "logs": [msg]}
-
         kucoin_direction, bybit_direction, kucoin_price, bybit_price = self._get_directions_and_prices(symbol)
-        kucoin_side = "sell" if kucoin_direction == "Short" else "buy"
-        bybit_side = "sell" if bybit_direction == "Short" else "buy"
         price_k = float(kucoin_price or 0)
         price_b = float(bybit_price or 0)
         if price_k <= 0 or price_b <= 0:
             return {"success": False, "status": None, "message": "Could not get mark price for symbol", "logs": []}
 
-        amount_kucoin = quantity / price_k
-        amount_bybit = quantity / price_b
+        ok, msg = self._validate_amount_limit(quantity, kucoin_price, bybit_price)
+        if not ok:
+            return {"success": False, "status": None, "message": msg, "logs": [msg]}
+
+        ok, msg = self._validate_balance(quantity, leverage, kucoin_price, bybit_price)
+        if not ok:
+            return {"success": False, "status": None, "message": msg, "logs": [msg]}
+
+        kucoin_side = "sell" if kucoin_direction == "Short" else "buy"
+        bybit_side = "sell" if bybit_direction == "Short" else "buy"
         logs: list[str] = []
 
-        # Step 1: Place order on Exchange A (KuCoin) — real
-        res_a = place_market_order("kucoin", symbol, kucoin_side, quantity, leverage, price_k)
+        # Step 1: Place order on KuCoin — amount = token quantity (no conversion)
+        res_a = place_market_order("kucoin", symbol, kucoin_side, quantity, leverage)
         if not res_a.get("success"):
             logs.append(f"[KuCoin] Place order — FAILED: {res_a.get('error', 'Unknown')}")
             return {"success": False, "status": None, "message": f"KuCoin order failed: {res_a.get('error')}", "logs": logs}
-        logs.append(f"[KuCoin] Place {kucoin_direction} order: {quantity} USDT, {leverage}x — OK")
+        logs.append(f"[KuCoin] Place {kucoin_direction} order: {quantity} tokens, {leverage}x — OK")
 
-        # Step 2: Place order on Exchange B (Bybit) — real or simulated failure
+        # Step 2: Place order on Bybit — same token quantity
         exchange_b_ok = True
         if simulate_failure:
             logs.append("[Bybit] Place order — FAILED (simulated)")
             exchange_b_ok = False
         else:
-            res_b = place_market_order("bybit", symbol, bybit_side, quantity, leverage, price_b)
+            res_b = place_market_order("bybit", symbol, bybit_side, quantity, leverage)
             if not res_b.get("success"):
                 logs.append(f"[Bybit] Place order — FAILED: {res_b.get('error', 'Unknown')}")
                 exchange_b_ok = False
             else:
-                logs.append(f"[Bybit] Place {bybit_direction} order: {quantity} USDT, {leverage}x — OK")
+                logs.append(f"[Bybit] Place {bybit_direction} order: {quantity} tokens, {leverage}x — OK")
 
         if not exchange_b_ok:
-            # Rollback: close position on Exchange A
-            close_res = close_position("kucoin", symbol, kucoin_side, amount_kucoin)
+            close_res = close_position("kucoin", symbol, kucoin_side, quantity)
             if close_res.get("success"):
                 logs.append("[KuCoin] Rollback: close position — OK")
             else:

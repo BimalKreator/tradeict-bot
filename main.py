@@ -193,8 +193,8 @@ def execute_trade(body: ExecuteTradeRequest):
         raise HTTPException(status_code=400, detail="Invalid symbol")
     if body.quantity <= 0 or body.leverage <= 0:
         raise HTTPException(status_code=400, detail="quantity and leverage must be positive")
-    if body.quantity > 20:
-        raise HTTPException(status_code=400, detail="Quantity exceeds testing limit (20 USDT)")
+    if body.quantity > 5:
+        raise HTTPException(status_code=400, detail="Quantity exceeds testing limit (5 tokens)")
 
     executor = TradeExecutor()
     result = executor.execute_dual_trade(

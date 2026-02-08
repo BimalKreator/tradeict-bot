@@ -273,13 +273,12 @@ def place_market_order(
     exchange_name: str,
     normalized_symbol: str,
     side: str,
-    quantity_usdt: float,
+    amount_base: float,
     leverage: int,
-    price: float,
 ) -> dict[str, Any]:
     """
     Place a market order on the given exchange (futures).
-    side: 'buy' or 'sell'. quantity_usdt: order size in USDT. price: used to convert to base amount.
+    side: 'buy' or 'sell'. amount_base: order size in tokens (base currency), passed directly to ccxt.
     Returns { "success": bool, "error": str | None, "order_id": str | None }.
     """
     result: dict[str, Any] = {"success": False, "error": None, "order_id": None}
@@ -299,10 +298,9 @@ def place_market_order(
         if not sym:
             result["error"] = f"Symbol {normalized_symbol} not found"
             return result
-        if price <= 0:
-            result["error"] = "Invalid price"
+        if amount_base <= 0:
+            result["error"] = "Amount must be positive"
             return result
-        amount_base = quantity_usdt / price
         side_lower = side.lower() if side else "buy"
         params: dict[str, Any] = {"leverage": leverage}
         order = exchange.create_market_order(sym, side_lower, amount_base, params)
