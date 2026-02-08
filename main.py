@@ -38,12 +38,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Templates and static (if added later)
+# Templates and static
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-if os.path.isdir(os.path.join(BASE_DIR, "static")):
-    app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+static_dir = os.path.join(BASE_DIR, "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -201,8 +202,6 @@ def execute_trade(body: ExecuteTradeRequest):
         raise HTTPException(status_code=400, detail="Invalid symbol")
     if body.quantity <= 0 or body.leverage <= 0:
         raise HTTPException(status_code=400, detail="quantity and leverage must be positive")
-    if body.quantity > 5:
-        raise HTTPException(status_code=400, detail="Quantity exceeds testing limit (5 tokens)")
 
     executor = TradeExecutor()
     result = executor.execute_dual_trade(
