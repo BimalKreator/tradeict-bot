@@ -93,6 +93,7 @@ def _enrich_contract_specs(
 
     # Funding interval from market['info']: KuCoin = seconds, Bybit V5 = minutes
     info = m.get("info") or {}
+    symbol_display = row.get("symbol", raw_symbol)
     if isinstance(info, dict):
         raw_interval = info.get("fundingInterval")
         if raw_interval is not None:
@@ -105,9 +106,15 @@ def _enrich_contract_specs(
                     # Bybit V5: fundingInterval is in minutes (e.g. 480 -> 8h)
                     interval_hours = val / 60
                 if interval_hours >= 1:
-                    row["funding_interval"] = int(interval_hours)
-            except (TypeError, ValueError):
-                pass
+                    interval_int = int(interval_hours)
+                    row["funding_interval"] = interval_int
+                    print(f"--> {symbol_display} {exchange_id} Interval detected: {interval_int}h")
+            except (TypeError, ValueError) as e:
+                print(f"--> {symbol_display} {exchange_id} fundingInterval parse failed: raw={raw_interval!r} err={e}")
+        else:
+            # Debug: print raw info for a few symbols when interval key is missing
+            if symbol_display in ("BTC/USDT", "ETH/USDT", "API3/USDT"):
+                print(f"--> [DEBUG] {symbol_display} {exchange_id} info (no fundingInterval): {info}")
     # If still None, _row() may have set it from timestamp math; otherwise stays None
 
 

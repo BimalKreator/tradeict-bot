@@ -23,18 +23,22 @@ def get_arbitrage_opportunities() -> list[dict[str, Any]]:
     common = set(kucoin_by_symbol) & set(bybit_by_symbol)
 
     results = []
-    for symbol in common:
+    for symbol in sorted(common):
         kr = kucoin_by_symbol[symbol].get("funding_rate")
         br = bybit_by_symbol[symbol].get("funding_rate")
         if kr is None or br is None:
             continue
         kucoin_interval = kucoin_by_symbol[symbol].get("funding_interval")
         bybit_interval = bybit_by_symbol[symbol].get("funding_interval")
+        print(f"[DEBUG] Checking {symbol}: KuCoin={kucoin_interval}h | Bybit={bybit_interval}h")
         # Strict interval matching: only pair when both have same funding interval (e.g. 8h vs 8h)
         if kucoin_interval is None or bybit_interval is None:
+            print(f"⚠️ MISSING DATA: {symbol} (KuCoin: {kucoin_interval}, Bybit: {bybit_interval})")
             continue
         if kucoin_interval != bybit_interval:
+            print(f"❌ MISMATCH: {symbol} (Skipping)")
             continue
+        print(f"✅ MATCH: {symbol}")
         gross_spread = abs(kr - br)
         if kr > br:
             action = "KuCoin: Short / Bybit: Long"
