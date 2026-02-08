@@ -86,11 +86,24 @@ def _fetch_usdt_perpetuals_for_exchange(exchange_id: str) -> list[dict[str, Any]
     raise ValueError(f"Unknown exchange: {exchange_id}")
 
 
+# In-memory cache so /api/screener and pagination don't re-fetch from exchanges every request
+_MARKET_DATA_CACHE: dict[str, Any] | None = None
+_MARKET_DATA_CACHE_TS: float = 0
+MARKET_DATA_CACHE_TTL_SECONDS = 60
+
+
 def fetch_all_market_data() -> dict[str, Any]:
     """
     Fetch USDT perpetual data from KuCoin and Bybit.
     If one exchange fails, the other still returns data; failed exchange has error message and zero count.
+    Uses in-memory cache (TTL) so repeated calls (e.g. pagination) don't hit exchanges.
     """
+    import time
+    global _MARKET_DATA_CACHE, _MARKET_DATA_CACHE_TS
+    now = time.monotonic()
+    if _MARKET_DATA_CACHE is not None and (now - _MARKET_DATA_CACHE_TS) < MARKET_DATA_CACHE_TTL_SECONDS:
+        return _MARKET_DATA_CACHE
+
     summary: dict[str, Any] = {
         "kucoin": {"symbols_count": 0, "symbols": [], "error": None},
         "bybit": {"symbols_count": 0, "symbols": [], "error": None},
@@ -107,4 +120,6 @@ def fetch_all_market_data() -> dict[str, Any]:
             summary[exchange_id]["symbols_count"] = 0
             summary[exchange_id]["symbols"] = []
 
+    _MARKET_DATA_CACHE = summary
+    _MARKET_DATA_CACHE_TS = now
     return summary

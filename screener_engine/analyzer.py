@@ -7,10 +7,10 @@ from __future__ import annotations
 from typing import Any
 
 
-def get_screener_results() -> list[dict[str, Any]]:
+def get_arbitrage_opportunities() -> list[dict[str, Any]]:
     """
-    Fetch normalized market data, match symbols on both exchanges, compute gross spread
-    and recommended action. Returns list of opportunities (unsorted; API sorts by spread).
+    Fetch normalized market data (cached), match symbols on both exchanges, compute gross spread,
+    recommended action, and next_funding_time. Returns full list; API filters/sorts/paginates.
     """
     from market_data_service.exchange import fetch_all_market_data
 
@@ -29,16 +29,18 @@ def get_screener_results() -> list[dict[str, Any]]:
         if kr is None or br is None:
             continue
         gross_spread = abs(kr - br)
-        # Standard arbitrage: short the higher rate, long the lower rate
         if kr > br:
             action = "KuCoin: Short / Bybit: Long"
         else:
             action = "KuCoin: Long / Bybit: Short"
+        # next_funding_time for sort_by=interval (prefer Bybit, fallback KuCoin)
+        next_ft = bybit_by_symbol[symbol].get("next_funding_time") or kucoin_by_symbol[symbol].get("next_funding_time")
         results.append({
             "symbol": symbol,
             "kucoin_rate": kr,
             "bybit_rate": br,
             "gross_spread": gross_spread,
             "recommended_action": action,
+            "next_funding_time": next_ft,
         })
     return results

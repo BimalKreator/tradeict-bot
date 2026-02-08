@@ -72,13 +72,44 @@ def get_market_data():
 
 
 @app.get("/api/screener")
-def get_screener():
+def get_screener(
+    page: int = 1,
+    limit: int = 10,
+    search: str | None = None,
+    sort_by: str = "spread",
+):
     """
-    Return funding arbitrage opportunities: symbols on both exchanges with
-    gross spread and recommended action. Sorted by gross spread descending.
+    Return funding arbitrage opportunities with server-side pagination, search, and sort.
+    Uses cached market data (no re-fetch from exchanges per request).
     """
-    from screener_engine.analyzer import get_screener_results
-    results = get_screener_results()
-    # Highest spread first
-    results.sort(key=lambda x: x["gross_spread"], reverse=True)
-    return {"opportunities": results}
+    from screener_engine.analyzer import get_arbitrage_opportunities
+
+    full = get_arbitrage_opportunities()
+
+    # 1. Filter by search (token name / symbol)
+    if search and search.strip():
+        q = search.strip().lower()
+        full = [r for r in full if q in r["symbol"].lower()]
+
+    # 2. Sort: spread = gross_spread desc; interval = next_funding_time asc (nulls last)
+    if sort_by == "interval":
+        def _interval_key(r):
+            nt = r.get("next_funding_time")
+            return (nt is None, nt or "")
+
+        full.sort(key=_interval_key)
+    else:
+        full.sort(key=lambda x: x["gross_spread"], reverse=True)
+
+    total_items = len(full)
+    total_pages = max(1, (total_items + limit - 1) // limit) if limit > 0 else 1
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * limit
+    data = full[start : start + limit]
+
+    return {
+        "data": data,
+        "total_pages": total_pages,
+        "current_page": page,
+        "total_items": total_items,
+    }

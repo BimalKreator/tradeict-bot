@@ -116,6 +116,83 @@
       border-color: #6366F1;
     }
 
+    .screener-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem 1rem;
+    }
+
+    .screener-controls input.search-token,
+    .screener-controls select.sort-by {
+      padding: 0.35rem 0.5rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.8125rem;
+    }
+
+    .screener-controls input.search-token:focus,
+    .screener-controls select.sort-by:focus {
+      outline: none;
+      border-color: #6366F1;
+    }
+
+    .screener-controls input.search-token {
+      width: 10rem;
+      min-width: 8rem;
+    }
+
+    .screener-controls label.sort-label {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+    }
+
+    .screener-pagination {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem 1rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .screener-pagination button {
+      padding: 0.4rem 0.75rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.8125rem;
+      cursor: pointer;
+    }
+
+    .screener-pagination button:hover:not(:disabled) {
+      background: var(--border);
+    }
+
+    .screener-pagination button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .screener-pagination .page-info {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+    }
+
+    .screener-table-container {
+      min-height: 280px;
+    }
+
+    .screener-loading .screener-table {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
     .card-body {
       color: var(--text);
       font-size: 0.9375rem;
@@ -209,13 +286,21 @@
         <section class="card card-screener" aria-label="Screener">
           <div class="card-header-row">
             <h2 class="card-title">Screener</h2>
-            <div class="global-threshold-wrap">
-              <label for="global-threshold">Global Min Threshold %</label>
-              <input type="number" id="global-threshold" class="global-threshold" step="0.001" min="0" value="0.01" aria-label="Global min threshold %">
+            <div class="screener-controls">
+              <input type="text" id="search-token" class="search-token" placeholder="Search Token" aria-label="Search token" autocomplete="off">
+              <label for="sort-by" class="sort-label">Sort By</label>
+              <select id="sort-by" class="sort-by" aria-label="Sort by">
+                <option value="spread">Spread</option>
+                <option value="interval">Funding Interval</option>
+              </select>
+              <div class="global-threshold-wrap">
+                <label for="global-threshold">Global Min Threshold %</label>
+                <input type="number" id="global-threshold" class="global-threshold" step="0.001" min="0" value="0.01" aria-label="Global min threshold %">
+              </div>
             </div>
           </div>
           <div class="card-body">
-            <div class="screener-wrap">
+            <div class="screener-wrap screener-table-container" id="screener-container">
               <div id="screener-status">Loading…</div>
               <table class="screener-table" id="screener-table" style="display: none;">
                 <thead>
@@ -231,6 +316,11 @@
                 </thead>
                 <tbody id="screener-tbody"></tbody>
               </table>
+            </div>
+            <div class="screener-pagination" id="screener-pagination" style="display: none;">
+              <button type="button" id="pagination-prev" aria-label="Previous page">Previous</button>
+              <span class="page-info" id="page-info">Page 1 of 1</span>
+              <button type="button" id="pagination-next" aria-label="Next page">Next</button>
             </div>
           </div>
         </section>
@@ -270,7 +360,15 @@
       var statusEl = document.getElementById('screener-status');
       var tableEl = document.getElementById('screener-table');
       var tbody = document.getElementById('screener-tbody');
+      var container = document.getElementById('screener-container');
+      var paginationEl = document.getElementById('screener-pagination');
       var globalThresholdInput = document.getElementById('global-threshold');
+      var searchInput = document.getElementById('search-token');
+      var sortSelect = document.getElementById('sort-by');
+      var pageInfoEl = document.getElementById('page-info');
+      var prevBtn = document.getElementById('pagination-prev');
+      var nextBtn = document.getElementById('pagination-next');
+      var defaultLimit = 10;
       var defaultThreshold = 0.01;
 
       function pct(num) { return (num * 100).toFixed(4); }
@@ -284,14 +382,14 @@
         }).join(' | ');
       }
 
+      function getThreshold() { return parseFloat(globalThresholdInput.value) || 0; }
+
       function recalcAllNetSpreads() {
-        var threshold = parseFloat(globalThresholdInput.value) || 0;
-        var rows = tbody.querySelectorAll('tr[data-gross]');
-        rows.forEach(function (tr) {
+        var threshold = getThreshold();
+        tbody.querySelectorAll('tr[data-gross]').forEach(function (tr) {
           var gross = parseFloat(tr.getAttribute('data-gross'));
-          var net = (gross - threshold).toFixed(4);
           var cell = tr.querySelector('.net-spread');
-          if (cell) cell.textContent = net + '%';
+          if (cell) cell.textContent = (gross - threshold).toFixed(4) + '%';
         });
       }
 
@@ -300,34 +398,89 @@
         globalThresholdInput.addEventListener('change', recalcAllNetSpreads);
       }
 
-      fetch('/api/screener')
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          var list = data.opportunities || [];
-          if (list.length === 0) {
-            statusEl.textContent = 'No matched symbols.';
-            return;
-          }
-          statusEl.style.display = 'none';
-          tableEl.style.display = 'table';
-          list.forEach(function (row) {
-            var grossPct = pct(row.gross_spread);
-            var tr = document.createElement('tr');
-            tr.setAttribute('data-gross', grossPct);
-            tr.innerHTML =
-              '<td>' + row.symbol + '</td>' +
-              '<td class="' + fundClass(row.kucoin_rate) + '">' + pct(row.kucoin_rate) + '%</td>' +
-              '<td class="' + fundClass(row.bybit_rate) + '">' + pct(row.bybit_rate) + '%</td>' +
-              '<td>' + grossPct + '%</td>' +
-              '<td class="net-spread">' + (parseFloat(grossPct) - defaultThreshold).toFixed(4) + '%</td>' +
-              '<td>' + actionHtml(row.recommended_action) + '</td>' +
-              '<td><button type="button" class="trade-btn" disabled>Wait</button></td>';
-            tbody.appendChild(tr);
+      function fetchScreenerData(page) {
+        page = page || 1;
+        var search = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+        var sortBy = (sortSelect && sortSelect.value) ? sortSelect.value : 'spread';
+        if (container) container.classList.add('screener-loading');
+        statusEl.style.display = 'block';
+        statusEl.textContent = 'Loading…';
+        tableEl.style.display = 'none';
+        tbody.innerHTML = '';
+        if (paginationEl) paginationEl.style.display = 'none';
+
+        var params = new URLSearchParams();
+        params.set('page', String(page));
+        params.set('limit', String(defaultLimit));
+        params.set('sort_by', sortBy);
+        if (search) params.set('search', search);
+
+        fetch('/api/screener?' + params.toString())
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            if (container) container.classList.remove('screener-loading');
+            var list = res.data || [];
+            var totalPages = res.total_pages || 1;
+            var currentPage = res.current_page || 1;
+            var totalItems = res.total_items || 0;
+            var threshold = getThreshold();
+
+            if (list.length === 0 && currentPage === 1) {
+              statusEl.style.display = 'block';
+              statusEl.textContent = totalItems === 0 ? 'No matched symbols.' : 'No results for this page.';
+              return;
+            }
+            statusEl.style.display = 'none';
+            tableEl.style.display = 'table';
+            list.forEach(function (row) {
+              var grossPct = pct(row.gross_spread);
+              var net = (parseFloat(grossPct) - threshold).toFixed(4);
+              var tr = document.createElement('tr');
+              tr.setAttribute('data-gross', grossPct);
+              tr.innerHTML =
+                '<td>' + row.symbol + '</td>' +
+                '<td class="' + fundClass(row.kucoin_rate) + '">' + pct(row.kucoin_rate) + '%</td>' +
+                '<td class="' + fundClass(row.bybit_rate) + '">' + pct(row.bybit_rate) + '%</td>' +
+                '<td>' + grossPct + '%</td>' +
+                '<td class="net-spread">' + net + '%</td>' +
+                '<td>' + actionHtml(row.recommended_action) + '</td>' +
+                '<td><button type="button" class="trade-btn" disabled>Wait</button></td>';
+              tbody.appendChild(tr);
+            });
+
+            if (paginationEl && totalPages > 0) {
+              paginationEl.style.display = 'flex';
+              if (pageInfoEl) pageInfoEl.textContent = 'Page ' + currentPage + ' of ' + totalPages;
+              if (prevBtn) {
+                prevBtn.disabled = currentPage <= 1;
+                prevBtn.onclick = function () { if (currentPage > 1) fetchScreenerData(currentPage - 1); };
+              }
+              if (nextBtn) {
+                nextBtn.disabled = currentPage >= totalPages;
+                nextBtn.onclick = function () { if (currentPage < totalPages) fetchScreenerData(currentPage + 1); };
+              }
+            }
+          })
+          .catch(function (err) {
+            if (container) container.classList.remove('screener-loading');
+            statusEl.style.display = 'block';
+            statusEl.textContent = 'Failed to load: ' + (err.message || String(err));
           });
-        })
-        .catch(function (err) {
-          statusEl.textContent = 'Failed to load: ' + (err.message || String(err));
+      }
+
+      if (searchInput) {
+        var searchTimeout;
+        searchInput.addEventListener('input', function () {
+          clearTimeout(searchTimeout);
+          searchTimeout = setTimeout(function () { fetchScreenerData(1); }, 300);
         });
+        searchInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { fetchScreenerData(1); }
+        });
+      }
+      if (sortSelect) sortSelect.addEventListener('change', function () { fetchScreenerData(1); });
+
+      fetchScreenerData(1);
     })();
   </script>
 </body>
