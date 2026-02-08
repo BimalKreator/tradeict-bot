@@ -426,6 +426,8 @@ def place_market_order(
             return result
         side_lower = side.lower() if side else "buy"
         params: dict[str, Any] = {"leverage": leverage}
+        if exchange.id == "kucoinfutures":
+            params["marginMode"] = "cross"
         order = exchange.create_market_order(sym, side_lower, amount_base, params)
         result["success"] = True
         result["order_id"] = order.get("id") if isinstance(order, dict) else None
@@ -466,6 +468,8 @@ def close_position(
             return result
         close_side = "sell" if (side or "").lower() == "buy" else "buy"
         params: dict[str, Any] = {"reduceOnly": True}
+        if exchange.id == "kucoinfutures":
+            params["marginMode"] = "cross"
         exchange.create_market_order(sym, close_side, amount_base, params)
         result["success"] = True
     except Exception as e:
