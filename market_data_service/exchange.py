@@ -48,16 +48,26 @@ def _normalize_symbol(ccxt_symbol: str) -> str:
 
 
 def _row(data: dict, raw_symbol: str) -> dict[str, Any]:
-    """Build one result row from CCXT funding data."""
+    """Build one result row from CCXT funding data. Includes funding_interval in hours."""
     normalized = _normalize_symbol(raw_symbol)
     next_ts = data.get("fundingTimestamp") or data.get("fundingRateTimestamp") or data.get("timestamp")
     next_funding_time = None
     if next_ts:
         next_funding_time = datetime.fromtimestamp(next_ts / 1000.0, tz=timezone.utc).isoformat()
+
+    # Funding interval in hours: (nextFundingTime - timestamp) / 3600000; default 8
+    funding_interval = 8
+    ts = data.get("timestamp")
+    if next_ts is not None and ts is not None and next_ts > ts:
+        funding_interval = round((next_ts - ts) / 3600000.0) or 8
+    elif isinstance(next_ts, (int, float)) and isinstance(ts, (int, float)):
+        funding_interval = max(1, round((next_ts - ts) / 3600000.0))
+
     return {
         "symbol": normalized,
         "funding_rate": data.get("fundingRate"),
         "next_funding_time": next_funding_time,
+        "funding_interval": funding_interval,
     }
 
 
@@ -77,13 +87,24 @@ def _enrich_contract_specs(row: dict[str, Any], exchange: ccxt.Exchange, raw_sym
 
 
 def _get_usdt_perp_symbols(exchange: ccxt.Exchange) -> list[str]:
-    """Filter exchange markets to USDT-margined perpetuals."""
+    """
+    Strict filter: only USDT-margined perpetual SWAP contracts (no spot, no delivery futures).
+    Ensures we do not include spot pairs like API3/USDT.
+    """
     usdt_perp_symbols = []
-    for s, m in exchange.markets.items():
-        if m.get("linear") and m.get("quote") == "USDT" and m.get("type") in ("swap", "future"):
+    markets = getattr(exchange, "markets", None) or {}
+    for s, m in markets.items():
+        if not isinstance(m, dict):
+            continue
+        # Must be perpetual swap, USDT-margined (linear=True), quote USDT, active
+        is_swap = m.get("swap") is True or m.get("type") in ("swap", "future")
+        if (
+            is_swap
+            and m.get("linear") is True
+            and m.get("quote") == "USDT"
+            and m.get("active", True) is not False
+        ):
             usdt_perp_symbols.append(s)
-    if not usdt_perp_symbols:
-        usdt_perp_symbols = [s for s in exchange.symbols if "/USDT" in s and ":USDT" in s]
     return usdt_perp_symbols
 
 

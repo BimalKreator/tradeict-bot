@@ -35,10 +35,14 @@ def get_arbitrage_opportunities() -> list[dict[str, Any]]:
             action = "KuCoin: Long / Bybit: Short"
         # next_funding_time for sort_by=interval (prefer Bybit, fallback KuCoin)
         next_ft = bybit_by_symbol[symbol].get("next_funding_time") or kucoin_by_symbol[symbol].get("next_funding_time")
+        kucoin_interval = kucoin_by_symbol[symbol].get("funding_interval", 8)
+        bybit_interval = bybit_by_symbol[symbol].get("funding_interval", 8)
         results.append({
             "symbol": symbol,
             "kucoin_rate": kr,
             "bybit_rate": br,
+            "kucoin_funding_interval": kucoin_interval,
+            "bybit_funding_interval": bybit_interval,
             "gross_spread": gross_spread,
             "recommended_action": action,
             "next_funding_time": next_ft,

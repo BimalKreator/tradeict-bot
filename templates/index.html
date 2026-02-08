@@ -251,6 +251,12 @@
     .screener-table .action-long { color: #22C55E; }
     .screener-table .action-short { color: #EF4444; }
 
+    .screener-table .fund-interval {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 0.15rem;
+    }
+
     .screener-table button.trade-btn {
       padding: 0.35rem 0.75rem;
       background: var(--border);
@@ -765,10 +771,12 @@
               var tr = document.createElement('tr');
               tr.setAttribute('data-gross', grossPct);
               tr.setAttribute('data-symbol', row.symbol);
+              var kucoinInterval = row.kucoin_funding_interval != null ? row.kucoin_funding_interval : 8;
+              var bybitInterval = row.bybit_funding_interval != null ? row.bybit_funding_interval : 8;
               tr.innerHTML =
                 '<td>' + row.symbol + '</td>' +
-                '<td class="' + fundClass(row.kucoin_rate) + '">' + pct(row.kucoin_rate) + '%</td>' +
-                '<td class="' + fundClass(row.bybit_rate) + '">' + pct(row.bybit_rate) + '%</td>' +
+                '<td class="' + fundClass(row.kucoin_rate) + '"><span>' + pct(row.kucoin_rate) + '%</span><div class="fund-interval">Interval: ' + kucoinInterval + 'h</div></td>' +
+                '<td class="' + fundClass(row.bybit_rate) + '"><span>' + pct(row.bybit_rate) + '%</span><div class="fund-interval">Interval: ' + bybitInterval + 'h</div></td>' +
                 '<td>' + grossPct + '%</td>' +
                 '<td class="net-spread">' + net + '%</td>' +
                 '<td>' + actionHtml(row.recommended_action) + '</td>' +
