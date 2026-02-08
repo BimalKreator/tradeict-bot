@@ -5,6 +5,7 @@ Normalizes symbols to BASE/USDT (e.g. BTC/USDT).
 """
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -428,12 +429,13 @@ def place_market_order(
         params: dict[str, Any] = {"leverage": leverage}
         if exchange.id == "kucoinfutures":
             try:
-                # Force switch to Cross Margin for this specific symbol (fixes 330005 for new pairs)
                 exchange.set_margin_mode("cross", sym)
                 print(f"✅ Switched {sym} to Cross Margin on KuCoin")
             except Exception as e:
-                print(f"⚠️ Could not set Cross Margin for {sym}: {e}")
-            params["marginMode"] = "cross"
+                print(f"⚠️ Margin Mode Set Info: {e}")
+            time.sleep(0.2)
+            if "marginMode" in params:
+                del params["marginMode"]
         order = exchange.create_market_order(sym, side_lower, amount_base, params)
         result["success"] = True
         result["order_id"] = order.get("id") if isinstance(order, dict) else None
