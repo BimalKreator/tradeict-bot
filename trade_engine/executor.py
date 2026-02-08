@@ -1,18 +1,19 @@
 """
 Trade Execution Engine: dual-exchange atomic logic with rollback on failure.
+Performs REAL trades via ccxt when simulate_failure is False. Testing limit: 20 USDT.
 """
 from __future__ import annotations
 
 from typing import Any
 
-# Mock balance (must match main.py for validation)
-MOCK_BALANCE_USDT = 1000.0
+# Hard limit for testing phase (USDT per order)
+MAX_ORDER_USDT = 20.0
 
 
 class TradeExecutor:
     """
-    Executes dual trades (Exchange A then B). If B fails, rolls back A and logs FAILED_ROLLBACK.
-    All order placement is mocked.
+    Executes dual trades (KuCoin then Bybit). If Bybit fails, closes KuCoin position (rollback).
+    Real orders via ccxt when simulate_failure is False.
     """
 
     def __init__(self) -> None:
@@ -24,9 +25,28 @@ class TradeExecutor:
         return quantity / leverage
 
     def _validate_balance(self, quantity: float, leverage: int) -> tuple[bool, str]:
+        from market_data_service.exchange import get_wallet_balance
+
         margin = self._required_margin(quantity, leverage)
-        if margin > MOCK_BALANCE_USDT:
-            return False, f"Insufficient balance: margin {margin} > {MOCK_BALANCE_USDT} USDT"
+        kucoin = get_wallet_balance("kucoin")
+        bybit = get_wallet_balance("bybit")
+        if kucoin.get("error"):
+            return False, f"KuCoin: {kucoin['error']}"
+        if bybit.get("error"):
+            return False, f"Bybit: {bybit['error']}"
+        avail_k = float(kucoin.get("available_balance") or 0)
+        avail_b = float(bybit.get("available_balance") or 0)
+        if margin > avail_k:
+            return False, f"Insufficient balance: margin {margin} > KuCoin available {avail_k} USDT"
+        if margin > avail_b:
+            return False, f"Insufficient balance: margin {margin} > Bybit available {avail_b} USDT"
+        return True, ""
+
+    def _validate_amount_limit(self, quantity: float) -> tuple[bool, str]:
+        if quantity > MAX_ORDER_USDT:
+            return False, f"Order size {quantity} USDT exceeds testing limit ({MAX_ORDER_USDT} USDT)"
+        if quantity <= 0:
+            return False, "Order size must be positive"
         return True, ""
 
     def _get_directions_and_prices(self, symbol: str) -> tuple[str, str, float | None, float | None]:
@@ -53,14 +73,6 @@ class TradeExecutor:
         bybit_price = prices.get("bybit_price")
         return kucoin_direction, bybit_direction, kucoin_price, bybit_price
 
-    def _place_order_mock(self, exchange: str, symbol: str, side: str, quantity: float, leverage: int) -> None:
-        """Mock place order on exchange. Raises on simulate_failure when exchange is Bybit."""
-        pass  # Mock success; raise only when caller requests simulate_failure for Exchange B
-
-    def _close_position_mock(self, exchange: str, symbol: str) -> None:
-        """Mock close position on exchange (rollback)."""
-        pass
-
     def execute_dual_trade(
         self,
         symbol: str,
@@ -69,34 +81,60 @@ class TradeExecutor:
         simulate_failure: bool = False,
     ) -> dict[str, Any]:
         """
-        Execute order on Exchange A (KuCoin), then Exchange B (Bybit).
-        If simulate_failure is True, Exchange B raises; then rollback A and log FAILED_ROLLBACK.
-        Otherwise log OPEN.
+        Execute order on KuCoin (A) then Bybit (B). Real orders via ccxt unless simulate_failure.
+        Safety: quantity must be <= 20 USDT. If B fails, close A position (rollback).
         """
+        from market_data_service.exchange import close_position, place_market_order
+
         import database
+
+        ok, msg = self._validate_amount_limit(quantity)
+        if not ok:
+            return {"success": False, "status": None, "message": msg, "logs": [msg]}
 
         ok, msg = self._validate_balance(quantity, leverage)
         if not ok:
             return {"success": False, "status": None, "message": msg, "logs": [msg]}
 
         kucoin_direction, bybit_direction, kucoin_price, bybit_price = self._get_directions_and_prices(symbol)
+        kucoin_side = "sell" if kucoin_direction == "Short" else "buy"
+        bybit_side = "sell" if bybit_direction == "Short" else "buy"
+        price_k = float(kucoin_price or 0)
+        price_b = float(bybit_price or 0)
+        if price_k <= 0 or price_b <= 0:
+            return {"success": False, "status": None, "message": "Could not get mark price for symbol", "logs": []}
+
+        amount_kucoin = quantity / price_k
+        amount_bybit = quantity / price_b
         logs: list[str] = []
 
-        # Step 1: Place order on Exchange A (KuCoin) — mock success
+        # Step 1: Place order on Exchange A (KuCoin) — real
+        res_a = place_market_order("kucoin", symbol, kucoin_side, quantity, leverage, price_k)
+        if not res_a.get("success"):
+            logs.append(f"[KuCoin] Place order — FAILED: {res_a.get('error', 'Unknown')}")
+            return {"success": False, "status": None, "message": f"KuCoin order failed: {res_a.get('error')}", "logs": logs}
         logs.append(f"[KuCoin] Place {kucoin_direction} order: {quantity} USDT, {leverage}x — OK")
-        exchange_a_ok = True
 
-        # Step 2: Place order on Exchange B (Bybit) — mock or simulate failure
+        # Step 2: Place order on Exchange B (Bybit) — real or simulated failure
+        exchange_b_ok = True
         if simulate_failure:
             logs.append("[Bybit] Place order — FAILED (simulated)")
             exchange_b_ok = False
         else:
-            logs.append(f"[Bybit] Place {bybit_direction} order: {quantity} USDT, {leverage}x — OK")
-            exchange_b_ok = True
+            res_b = place_market_order("bybit", symbol, bybit_side, quantity, leverage, price_b)
+            if not res_b.get("success"):
+                logs.append(f"[Bybit] Place order — FAILED: {res_b.get('error', 'Unknown')}")
+                exchange_b_ok = False
+            else:
+                logs.append(f"[Bybit] Place {bybit_direction} order: {quantity} USDT, {leverage}x — OK")
 
         if not exchange_b_ok:
             # Rollback: close position on Exchange A
-            logs.append("[KuCoin] Rollback: close position — OK")
+            close_res = close_position("kucoin", symbol, kucoin_side, amount_kucoin)
+            if close_res.get("success"):
+                logs.append("[KuCoin] Rollback: close position — OK")
+            else:
+                logs.append(f"[KuCoin] Rollback: close position — FAILED: {close_res.get('error', 'Unknown')}")
             database.insert_trade(
                 token_group_id=symbol,
                 quantity=quantity,
@@ -114,7 +152,6 @@ class TradeExecutor:
                 "logs": logs,
             }
 
-        # Success: both orders placed
         database.insert_trade(
             token_group_id=symbol,
             quantity=quantity,

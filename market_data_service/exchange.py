@@ -258,3 +258,96 @@ def get_wallet_balance(exchange_name: str) -> dict[str, Any]:
         result["available_balance"] = 0.0
         result["unrealized_pnl"] = 0.0
     return result
+
+
+def _perp_symbol(exchange: ccxt.Exchange, normalized_symbol: str) -> str | None:
+    """Return CCXT perp symbol (e.g. BTC/USDT:USDT) for the exchange, or None if not found."""
+    perp = f"{normalized_symbol}:USDT" if ":USDT" not in normalized_symbol else normalized_symbol
+    if perp in exchange.markets:
+        return perp
+    alt = next((s for s in exchange.markets if _normalize_symbol(s) == normalized_symbol), None)
+    return alt
+
+
+def place_market_order(
+    exchange_name: str,
+    normalized_symbol: str,
+    side: str,
+    quantity_usdt: float,
+    leverage: int,
+    price: float,
+) -> dict[str, Any]:
+    """
+    Place a market order on the given exchange (futures).
+    side: 'buy' or 'sell'. quantity_usdt: order size in USDT. price: used to convert to base amount.
+    Returns { "success": bool, "error": str | None, "order_id": str | None }.
+    """
+    result: dict[str, Any] = {"success": False, "error": None, "order_id": None}
+    try:
+        if exchange_name.lower() == "kucoin":
+            exchange = ccxt.kucoinfutures(_get_kucoin_config())
+        elif exchange_name.lower() == "bybit":
+            exchange = ccxt.bybit(_get_bybit_config())
+        else:
+            result["error"] = f"Unknown exchange: {exchange_name}"
+            return result
+        if not exchange.apiKey:
+            result["error"] = "API keys not configured"
+            return result
+        exchange.load_markets()
+        sym = _perp_symbol(exchange, normalized_symbol)
+        if not sym:
+            result["error"] = f"Symbol {normalized_symbol} not found"
+            return result
+        if price <= 0:
+            result["error"] = "Invalid price"
+            return result
+        amount_base = quantity_usdt / price
+        side_lower = side.lower() if side else "buy"
+        params: dict[str, Any] = {"leverage": leverage}
+        order = exchange.create_market_order(sym, side_lower, amount_base, params)
+        result["success"] = True
+        result["order_id"] = order.get("id") if isinstance(order, dict) else None
+    except Exception as e:
+        logger.exception("place_market_order %s %s: %s", exchange_name, normalized_symbol, e)
+        result["error"] = str(e)
+    return result
+
+
+def close_position(
+    exchange_name: str,
+    normalized_symbol: str,
+    side: str,
+    amount_base: float,
+) -> dict[str, Any]:
+    """
+    Close (reduce) a position on the given exchange.
+    side: the side that was opened ('buy' or 'sell'); we send the opposite to reduce.
+    amount_base: position size in base currency.
+    Returns { "success": bool, "error": str | None }.
+    """
+    result: dict[str, Any] = {"success": False, "error": None}
+    try:
+        if exchange_name.lower() == "kucoin":
+            exchange = ccxt.kucoinfutures(_get_kucoin_config())
+        elif exchange_name.lower() == "bybit":
+            exchange = ccxt.bybit(_get_bybit_config())
+        else:
+            result["error"] = f"Unknown exchange: {exchange_name}"
+            return result
+        if not exchange.apiKey:
+            result["error"] = "API keys not configured"
+            return result
+        exchange.load_markets()
+        sym = _perp_symbol(exchange, normalized_symbol)
+        if not sym:
+            result["error"] = f"Symbol {normalized_symbol} not found"
+            return result
+        close_side = "sell" if (side or "").lower() == "buy" else "buy"
+        params: dict[str, Any] = {"reduceOnly": True}
+        exchange.create_market_order(sym, close_side, amount_base, params)
+        result["success"] = True
+    except Exception as e:
+        logger.exception("close_position %s %s: %s", exchange_name, normalized_symbol, e)
+        result["error"] = str(e)
+    return result

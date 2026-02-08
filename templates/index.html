@@ -458,6 +458,26 @@
     .recent-trades-table .status-failed { color: #EF4444; }
     .recent-trades-table .status-closed { color: var(--text-muted); }
 
+    .test-connection-btn {
+      padding: 0.5rem 1rem;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .test-connection-btn:hover {
+      background: #6366F1;
+      border-color: #6366F1;
+    }
+
+    .modal-trade-warning {
+      margin: 1rem 0 0;
+      font-size: 0.8125rem;
+      color: #F59E0B;
+    }
+
     footer {
       margin-top: auto;
       padding: 1rem 0;
@@ -527,7 +547,9 @@
         </section>
         <section class="card" aria-label="Status">
           <h2 class="card-title">Status</h2>
-          <div class="card-body">—</div>
+          <div class="card-body">
+            <button type="button" id="test-connection-btn" class="test-connection-btn">Test Connection</button>
+          </div>
         </section>
         <section class="card recent-trades-card" aria-label="Recent Trades">
           <h2 class="card-title">Recent Trades</h2>
@@ -581,7 +603,7 @@
         </div>
         <div class="modal-field">
           <label for="modal-quantity">Quantity (USDT)</label>
-          <input type="number" id="modal-quantity" min="0" step="1" value="100" placeholder="USDT amount" aria-label="Quantity USDT">
+          <input type="number" id="modal-quantity" min="0" max="20" step="1" value="10" placeholder="USDT amount (max 20)" aria-label="Quantity USDT">
         </div>
         <div class="modal-stats">
           <div class="modal-stats-row">
@@ -613,11 +635,38 @@
           <button type="button" class="btn-cancel" id="modal-cancel">Cancel</button>
           <button type="button" class="btn-confirm" id="modal-confirm" disabled>Confirm Trade</button>
         </div>
+        <p class="modal-trade-warning">&#x26a0;&#xfe0f; Real Trade Mode Active (Limit: 20 USDT)</p>
       </div>
     </div>
   </div>
 
   <script>
+    (function () {
+      var testBtn = document.getElementById('test-connection-btn');
+      if (testBtn) {
+        testBtn.addEventListener('click', function () {
+          testBtn.disabled = true;
+          testBtn.textContent = 'Checking…';
+          fetch('/api/test-connection')
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+              if (res.status === 'ok') {
+                alert(res.message || 'Connected! KuCoin & Bybit Ready.');
+              } else {
+                alert((res.message || 'Error') + '\n\n' + (res.details || ''));
+              }
+            })
+            .catch(function (err) {
+              alert('Request failed: ' + (err.message || String(err)));
+            })
+            .finally(function () {
+              testBtn.disabled = false;
+              testBtn.textContent = 'Test Connection';
+            });
+        });
+      }
+    })();
+
     (function () {
       var el = document.getElementById('market-data-status');
       fetch('/api/market-data')
@@ -803,12 +852,14 @@
         balanceKucoinEl.textContent = formatNum(previewData.kucoin_balance) + ' USDT';
         balanceBybitEl.textContent = formatNum(previewData.bybit_balance) + ' USDT';
 
+        var overLimit = qty > 20;
         var insufficient = margin > previewData.kucoin_balance || margin > previewData.bybit_balance;
         if (warningEl) {
-          warningEl.classList.toggle('is-visible', insufficient);
+          warningEl.classList.toggle('is-visible', insufficient || overLimit);
+          warningEl.textContent = overLimit ? 'Quantity exceeds 20 USDT limit' : 'Insufficient Balance';
         }
         if (confirmBtn) {
-          confirmBtn.disabled = insufficient;
+          confirmBtn.disabled = insufficient || overLimit;
         }
       }
 
@@ -818,7 +869,7 @@
         kucoinPriceEl.textContent = '—';
         bybitPriceEl.textContent = '—';
         leverageSelect.value = '1';
-        quantityInput.value = '100';
+        quantityInput.value = '10';
         marginKucoinEl.textContent = '—';
         marginBybitEl.textContent = '—';
         balanceKucoinEl.textContent = '—';
@@ -875,7 +926,12 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ symbol: symbol, quantity: quantity, leverage: leverage, simulate_failure: simulateFailure })
         })
-          .then(function (r) { return r.json(); })
+          .then(function (r) {
+            return r.json().then(function (res) {
+              if (!r.ok) throw new Error(res.detail || res.message || r.statusText);
+              return res;
+            });
+          })
           .then(function (res) {
             if (spinnerEl) spinnerEl.style.display = 'none';
             confirmBtn.disabled = false;
@@ -890,7 +946,7 @@
           .catch(function (err) {
             if (spinnerEl) spinnerEl.style.display = 'none';
             confirmBtn.disabled = false;
-            alert('Request failed: ' + (err.message || String(err)));
+            alert(err.message || 'Request failed');
           });
       });
 

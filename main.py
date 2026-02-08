@@ -154,16 +154,21 @@ def get_trade_preview(symbol: str):
 @app.get("/api/test-connection")
 def test_connection():
     """
-    Temporary endpoint to verify API keys: returns Connected or Auth Failed per exchange.
+    Verify API keys by fetching balance from both KuCoin and Bybit.
+    Returns status "ok" with message if both succeed, else "error" with failure details.
     """
     from market_data_service.exchange import get_wallet_balance
 
     kucoin = get_wallet_balance("kucoin")
     bybit = get_wallet_balance("bybit")
-    return {
-        "kucoin": "Connected" if not kucoin.get("error") else "Auth Failed",
-        "bybit": "Connected" if not bybit.get("error") else "Auth Failed",
-    }
+    errors = []
+    if kucoin.get("error"):
+        errors.append(f"KuCoin: {kucoin['error']}")
+    if bybit.get("error"):
+        errors.append(f"Bybit: {bybit['error']}")
+    if not errors:
+        return {"status": "ok", "message": "Connected! KuCoin & Bybit Ready."}
+    return {"status": "error", "message": "Error: " + "; ".join(errors)}
 
 
 class ExecuteTradeRequest(BaseModel):
@@ -188,6 +193,8 @@ def execute_trade(body: ExecuteTradeRequest):
         raise HTTPException(status_code=400, detail="Invalid symbol")
     if body.quantity <= 0 or body.leverage <= 0:
         raise HTTPException(status_code=400, detail="quantity and leverage must be positive")
+    if body.quantity > 20:
+        raise HTTPException(status_code=400, detail="Quantity exceeds testing limit (20 USDT)")
 
     executor = TradeExecutor()
     result = executor.execute_dual_trade(
