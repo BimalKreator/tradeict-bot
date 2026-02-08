@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Funding Arbitrage Bot</title>
+  <title>Tradeict Earner</title>
   <style>
     :root {
       --bg: #0B0B0E;
@@ -77,6 +77,45 @@
       letter-spacing: 0.05em;
     }
 
+    .card-screener .card-header-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .card-screener .card-header-row .card-title {
+      margin: 0;
+    }
+
+    .global-threshold-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .global-threshold-wrap label {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .global-threshold-wrap input.global-threshold {
+      width: 5rem;
+      padding: 0.35rem 0.5rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.8125rem;
+    }
+
+    .global-threshold-wrap input.global-threshold:focus {
+      outline: none;
+      border-color: #6366F1;
+    }
+
     .card-body {
       color: var(--text);
       font-size: 0.9375rem;
@@ -135,21 +174,6 @@
     .screener-table .action-long { color: #22C55E; }
     .screener-table .action-short { color: #EF4444; }
 
-    .screener-table input.threshold {
-      width: 5rem;
-      padding: 0.35rem 0.5rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--text);
-      font-size: 0.8125rem;
-    }
-
-    .screener-table input.threshold:focus {
-      outline: none;
-      border-color: #6366F1;
-    }
-
     .screener-table button.trade-btn {
       padding: 0.35rem 0.75rem;
       background: var(--border);
@@ -172,7 +196,7 @@
 <body>
   <div class="app">
     <header>
-      <h1>Funding Arbitrage Bot</h1>
+      <h1>Tradeict Earner</h1>
       <p class="subtitle">Kucoin & Bybit — Phase 0</p>
     </header>
 
@@ -183,7 +207,13 @@
           <div class="card-body" id="market-data-status">Loading…</div>
         </section>
         <section class="card card-screener" aria-label="Screener">
-          <h2 class="card-title">Screener</h2>
+          <div class="card-header-row">
+            <h2 class="card-title">Screener</h2>
+            <div class="global-threshold-wrap">
+              <label for="global-threshold">Global Min Threshold %</label>
+              <input type="number" id="global-threshold" class="global-threshold" step="0.001" min="0" value="0.01" aria-label="Global min threshold %">
+            </div>
+          </div>
           <div class="card-body">
             <div class="screener-wrap">
               <div id="screener-status">Loading…</div>
@@ -194,7 +224,6 @@
                     <th>KuCoin Funding %</th>
                     <th>Bybit Funding %</th>
                     <th>Gross Spread</th>
-                    <th>Min Threshold %</th>
                     <th>Net Spread</th>
                     <th>Suggested Action</th>
                     <th>Trade</th>
@@ -241,6 +270,7 @@
       var statusEl = document.getElementById('screener-status');
       var tableEl = document.getElementById('screener-table');
       var tbody = document.getElementById('screener-tbody');
+      var globalThresholdInput = document.getElementById('global-threshold');
       var defaultThreshold = 0.01;
 
       function pct(num) { return (num * 100).toFixed(4); }
@@ -254,10 +284,20 @@
         }).join(' | ');
       }
 
-      function updateNetSpread(rowIndex, grossSpreadPct, threshold) {
-        var net = (parseFloat(grossSpreadPct) - parseFloat(threshold)).toFixed(4);
-        var cell = tbody.rows[rowIndex].querySelector('.net-spread');
-        if (cell) cell.textContent = net + '%';
+      function recalcAllNetSpreads() {
+        var threshold = parseFloat(globalThresholdInput.value) || 0;
+        var rows = tbody.querySelectorAll('tr[data-gross]');
+        rows.forEach(function (tr) {
+          var gross = parseFloat(tr.getAttribute('data-gross'));
+          var net = (gross - threshold).toFixed(4);
+          var cell = tr.querySelector('.net-spread');
+          if (cell) cell.textContent = net + '%';
+        });
+      }
+
+      if (globalThresholdInput) {
+        globalThresholdInput.addEventListener('input', recalcAllNetSpreads);
+        globalThresholdInput.addEventListener('change', recalcAllNetSpreads);
       }
 
       fetch('/api/screener')
@@ -270,26 +310,19 @@
           }
           statusEl.style.display = 'none';
           tableEl.style.display = 'table';
-          list.forEach(function (row, i) {
+          list.forEach(function (row) {
             var grossPct = pct(row.gross_spread);
             var tr = document.createElement('tr');
+            tr.setAttribute('data-gross', grossPct);
             tr.innerHTML =
               '<td>' + row.symbol + '</td>' +
               '<td class="' + fundClass(row.kucoin_rate) + '">' + pct(row.kucoin_rate) + '%</td>' +
               '<td class="' + fundClass(row.bybit_rate) + '">' + pct(row.bybit_rate) + '%</td>' +
               '<td>' + grossPct + '%</td>' +
-              '<td><input type="number" class="threshold" step="0.001" min="0" value="' + defaultThreshold + '" data-row="' + i + '" data-gross="' + grossPct + '" aria-label="Min threshold %"></td>' +
               '<td class="net-spread">' + (parseFloat(grossPct) - defaultThreshold).toFixed(4) + '%</td>' +
               '<td>' + actionHtml(row.recommended_action) + '</td>' +
               '<td><button type="button" class="trade-btn" disabled>Wait</button></td>';
             tbody.appendChild(tr);
-          });
-          tbody.addEventListener('input', function (e) {
-            if (e.target.classList.contains('threshold')) {
-              var row = parseInt(e.target.getAttribute('data-row'), 10);
-              var gross = e.target.getAttribute('data-gross');
-              updateNetSpread(row, gross, e.target.value);
-            }
           });
         })
         .catch(function (err) {
