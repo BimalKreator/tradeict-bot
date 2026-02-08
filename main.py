@@ -82,7 +82,7 @@ def get_screener(
     page: int = 1,
     limit: int = 10,
     search: str | None = None,
-    sort_by: str = "spread",
+    sort_by: str = "optimal",
 ):
     """
     Return funding arbitrage opportunities with server-side pagination, search, and sort.
@@ -97,8 +97,16 @@ def get_screener(
         q = search.strip().lower()
         full = [r for r in full if q in r["symbol"].lower()]
 
-    # 2. Sort: spread = gross_spread desc; interval = next_funding_time asc (nulls last)
-    if sort_by == "interval":
+    # 2. Sort: optimal = interval asc then spread desc; spread = gross_spread desc; interval = next_funding_time asc
+    if sort_by == "optimal":
+        # Primary: funding_interval ascending (1h, 2h, 4h, 8h); None -> 999 at bottom. Secondary: gross_spread descending.
+        full.sort(
+            key=lambda x: (
+                x.get("kucoin_funding_interval") or x.get("bybit_funding_interval") or 999,
+                -x["gross_spread"],
+            )
+        )
+    elif sort_by == "interval":
         def _interval_key(r):
             nt = r.get("next_funding_time")
             return (nt is None, nt or "")
