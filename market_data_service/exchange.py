@@ -427,13 +427,13 @@ def place_market_order(
         side_lower = side.lower() if side else "buy"
         params: dict[str, Any] = {"leverage": leverage}
         if exchange.id == "kucoinfutures":
-            params["marginMode"] = "cross"  # Explicitly match account's Default Cross; avoids 330005
-        # Optional: ensure symbol margin mode is cross (no-op if already set)
-        if exchange.id == "kucoinfutures":
             try:
+                # Force switch to Cross Margin for this specific symbol (fixes 330005 for new pairs)
                 exchange.set_margin_mode("cross", sym)
-            except Exception:
-                pass  # Rely on params['marginMode'] in the order
+                print(f"✅ Switched {sym} to Cross Margin on KuCoin")
+            except Exception as e:
+                print(f"⚠️ Could not set Cross Margin for {sym}: {e}")
+            params["marginMode"] = "cross"
         order = exchange.create_market_order(sym, side_lower, amount_base, params)
         result["success"] = True
         result["order_id"] = order.get("id") if isinstance(order, dict) else None
