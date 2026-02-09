@@ -441,75 +441,97 @@ def place_market_order(
         print(f"[DEBUG] Applying User Leverage: {user_leverage}x")
 
         if exchange.id == "kucoinfutures":
+            # 1. Gatekeeper: validate symbol and get official symbol_id
+            target_base = normalized_symbol.split("/")[0] if "/" in normalized_symbol else normalized_symbol
+            found_market = None
+            for m in exchange.markets.values():
+                if not isinstance(m, dict):
+                    continue
+                if (
+                    m.get("base") == target_base
+                    and m.get("quote") == "USDT"
+                    and m.get("swap") is True
+                    and m.get("active", True) is not False
+                ):
+                    found_market = m
+                    break
+            if not found_market:
+                print(f"[WARN] Skipping {normalized_symbol}: Not tradable on KuCoin Futures.")
+                result["error"] = f"{normalized_symbol} is not in the active KuCoin Futures list. Trade skipped."
+                return result
+            sym = found_market["symbol"]
+            symbol_id = found_market["id"]
+            qty_str = exchange.amount_to_precision(sym, amount_base)
+            print(f"[DEBUG] KuCoin gatekeeper: using real id {symbol_id!r}")
+
+            # Setup (margin, leverage) on main connection
+            try:
+                exchange.futuresprivate_post_position_changemarginmode(
+                    {"symbol": symbol_id, "marginMode": "CROSS"}
+                )
+                print(f"[DEBUG] Cross mode set OK.")
+            except Exception as e:
+                print(f"[DEBUG] Setup marginMode failed (continue anyway): {e}")
+            try:
+                exchange.private_post_position_update_user_leverage(
+                    {"symbol": symbol_id, "leverage": str(user_leverage)}
+                )
+            except Exception as e:
+                print(f"[DEBUG] Setup leverage failed (continue anyway): {e}")
+            time.sleep(2)
+
+            payload = {
+                "clientOid": exchange.uuid(),
+                "side": side_lower,
+                "symbol": symbol_id,
+                "type": "market",
+                "size": qty_str,
+            }
+            print(f"[DEBUG] KuCoin RAW order payload (no marginMode/leverage): {payload}")
+            print(f"[DEBUG] Corrected Method: private_post_orders")
+
+            # 2. Execution loop: main connection first, then fresh instance on 900001
             order: dict[str, Any] | None = None
             for attempt in range(2):
-                if attempt == 1:
-                    print(f"[DEBUG] Retry (attempt 2): reloading markets...")
-                    exchange.load_markets(reload=True)
-                target_base = normalized_symbol.split("/")[0] if "/" in normalized_symbol else normalized_symbol
-                found_market = None
-                for m in exchange.markets.values():
-                    if not isinstance(m, dict):
-                        continue
-                    if (
-                        m.get("base") == target_base
-                        and m.get("quote") == "USDT"
-                        and m.get("swap") is True
-                        and m.get("active", True) is not False
-                    ):
-                        found_market = m
+                if attempt == 0:
+                    print(f"[DEBUG] Executing via Main Connection")
+                    try:
+                        raw_response = exchange.private_post_orders(payload)
+                        order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
+                        order = {
+                            "id": order_id,
+                            "symbol": sym,
+                            "status": "closed",
+                            "info": raw_response,
+                        }
                         break
-                if not found_market:
-                    print(f"[WARN] Skipping {normalized_symbol}: Not tradable on KuCoin Futures.")
-                    result["error"] = f"{normalized_symbol} is not in the active KuCoin Futures list. Trade skipped."
-                    return result
-                sym = found_market["symbol"]
-                symbol_id = found_market["id"]
-                qty_str = exchange.amount_to_precision(sym, amount_base)
-                print(f"[DEBUG] KuCoin gatekeeper: using real id {symbol_id!r} (attempt {attempt + 1})")
-                print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id} (no create_market_order).")
-                try:
-                    exchange.futuresprivate_post_position_changemarginmode(
-                        {"symbol": symbol_id, "marginMode": "CROSS"}
-                    )
-                    print(f"[DEBUG] Cross mode set OK.")
-                except Exception as e:
-                    print(f"[DEBUG] Setup marginMode failed (continue anyway): {e}")
-                try:
-                    exchange.private_post_position_update_user_leverage(
-                        {"symbol": symbol_id, "leverage": str(user_leverage)}
-                    )
-                except Exception as e:
-                    print(f"[DEBUG] Setup leverage failed (continue anyway): {e}")
-                time.sleep(2)
-                payload = {
-                    "clientOid": exchange.uuid(),
-                    "side": side_lower,
-                    "symbol": symbol_id,
-                    "type": "market",
-                    "size": qty_str,
-                }
-                print(f"[DEBUG] KuCoin RAW order payload (no marginMode/leverage): {payload}")
-                print(f"[DEBUG] Corrected Method: private_post_orders")
-                try:
-                    raw_response = exchange.private_post_orders(payload)
-                    order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
-                    order = {
-                        "id": order_id,
-                        "symbol": sym,
-                        "status": "closed",
-                        "info": raw_response,
-                    }
+                    except ccxt.ExchangeError as e:
+                        err_str = str(e).lower()
+                        code_str = str(getattr(e, "code", None) or getattr(e, "error", None) or "")
+                        if code_str == "900001" or "900001" in err_str or "symbol" in err_str or "does not exist" in err_str:
+                            print(f"[WARN] Error 900001 on main connection. Switching to FRESH connection...")
+                            continue
+                        raise
+                else:
+                    print(f"[DEBUG] Executing via Fresh Connection")
+                    temp_config = _get_kucoin_config()
+                    temp_exchange = ccxt.kucoinfutures(temp_config)
+                    try:
+                        # New clientOid for fresh attempt
+                        payload["clientOid"] = temp_exchange.uuid()
+                        raw_response = temp_exchange.private_post_orders(payload)
+                        order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
+                        order = {
+                            "id": order_id,
+                            "symbol": sym,
+                            "status": "closed",
+                            "info": raw_response,
+                        }
+                    finally:
+                        if hasattr(temp_exchange, "close"):
+                            temp_exchange.close()
                     break
-                except ccxt.ExchangeError as e:
-                    err_str = str(e).lower()
-                    code = getattr(e, "code", None) or getattr(e, "error", None)
-                    if code == "900001" or "900001" in err_str or "symbol" in err_str or "does not exist" in err_str:
-                        print(f"[WARN] Error 900001 / symbol rejected. Force reloading markets & retrying...")
-                        if attempt == 1:
-                            raise
-                        continue
-                    raise
+
             if order is None:
                 result["error"] = "KuCoin order failed after retry (symbol rejected)."
                 return result
