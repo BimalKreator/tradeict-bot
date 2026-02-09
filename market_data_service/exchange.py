@@ -433,40 +433,47 @@ def place_market_order(
             result["error"] = "API keys not configured"
             return result
         exchange.load_markets()
-        sym = _perp_symbol(exchange, normalized_symbol)
-        if not sym:
-            print(f"[DEBUG] Symbol resolution failed: normalized={normalized_symbol!r} -> no perp symbol on exchange")
-            result["error"] = f"Symbol {normalized_symbol} not found"
-            return result
         if amount_base <= 0:
             result["error"] = "Amount must be positive"
             return result
         side_lower = side.lower() if side else "buy"
-
         user_leverage = int(leverage) if leverage is not None and leverage > 0 else 1
-        qty_str = exchange.amount_to_precision(sym, amount_base)
-        print(f"[DEBUG] Applying User Leverage: {user_leverage}x | qty_str: {qty_str}")
 
         if exchange.id == "kucoinfutures":
-            market = exchange.market(sym)
-            market_id = market.get("id")
-            valid_kucoin_ids = _get_valid_kucoin_futures_ids(exchange)
-            if market_id is None or str(market_id) not in valid_kucoin_ids:
-                print(f"[DEBUG] Invalid futures symbol: normalized={normalized_symbol!r} perp={sym!r} market_id={market_id!r} not in contracts/active")
-                result["error"] = f"Invalid futures symbol ({normalized_symbol}): not in KuCoin contracts/active. Aborting without rollback."
+            # Gatekeeper: ask KuCoin's loaded markets — is this token in the active futures list?
+            target_base = normalized_symbol.split("/")[0] if "/" in normalized_symbol else normalized_symbol
+            found_market = None
+            for m in exchange.markets.values():
+                if not isinstance(m, dict):
+                    continue
+                if (
+                    m.get("base") == target_base
+                    and m.get("quote") == "USDT"
+                    and m.get("swap") is True
+                    and m.get("active", True) is not False
+                ):
+                    found_market = m
+                    break
+            if not found_market:
+                print(f"[WARN] Skipping {normalized_symbol}: Not tradable on KuCoin Futures.")
+                result["error"] = f"{normalized_symbol} is not in the active KuCoin Futures list. Trade skipped."
                 return result
-            print(f"[DEBUG] Symbol resolved: normalized={normalized_symbol!r} perp={sym!r} market_id={market_id!r}")
+            sym = found_market["symbol"]
+            symbol_id = found_market["id"]
+            qty_str = exchange.amount_to_precision(sym, amount_base)
+            print(f"[DEBUG] Applying User Leverage: {user_leverage}x | qty_str: {qty_str}")
+            print(f"[DEBUG] KuCoin gatekeeper: using real id {symbol_id!r}")
             print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id} (no create_market_order).")
             try:
                 exchange.futuresprivate_post_position_changemarginmode(
-                    {"symbol": market["id"], "marginMode": "CROSS"}
+                    {"symbol": symbol_id, "marginMode": "CROSS"}
                 )
                 print(f"[DEBUG] Cross mode set OK.")
             except Exception as e:
                 print(f"[DEBUG] Setup marginMode failed (continue anyway): {e}")
             try:
                 exchange.private_post_position_update_user_leverage(
-                    {"symbol": market["id"], "leverage": str(user_leverage)}
+                    {"symbol": symbol_id, "leverage": str(user_leverage)}
                 )
             except Exception as e:
                 print(f"[DEBUG] Setup leverage failed (continue anyway): {e}")
@@ -474,7 +481,7 @@ def place_market_order(
             payload = {
                 "clientOid": exchange.uuid(),
                 "side": side_lower,
-                "symbol": market["id"],
+                "symbol": symbol_id,
                 "type": "market",
                 "size": qty_str,
             }
@@ -490,6 +497,13 @@ def place_market_order(
             }
 
         elif exchange.id == "bybit":
+            sym = _perp_symbol(exchange, normalized_symbol)
+            if not sym:
+                print(f"[DEBUG] Symbol resolution failed: normalized={normalized_symbol!r} -> no perp symbol on exchange")
+                result["error"] = f"Symbol {normalized_symbol} not found"
+                return result
+            qty_str = exchange.amount_to_precision(sym, amount_base)
+            print(f"[DEBUG] Applying User Leverage: {user_leverage}x | qty_str: {qty_str}")
             print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id}.")
             market = exchange.market(sym)
             payload = {
@@ -510,6 +524,10 @@ def place_market_order(
             }
 
         else:
+            sym = _perp_symbol(exchange, normalized_symbol)
+            if not sym:
+                result["error"] = f"Symbol {normalized_symbol} not found"
+                return result
             order = exchange.create_market_order(
                 sym, side_lower, amount_base, {"leverage": user_leverage}
             )
