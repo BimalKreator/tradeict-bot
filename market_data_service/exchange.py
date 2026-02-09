@@ -408,7 +408,7 @@ def place_market_order(
 ) -> dict[str, Any]:
     """
     Place a market order on the given exchange (futures).
-    side: 'buy' or 'sell'. amount_base: order size in tokens (base currency), passed directly to ccxt.
+    side: 'buy' or 'sell'. amount_base: order size in tokens (base currency).
     Returns { "success": bool, "error": str | None, "order_id": str | None }.
     """
     result: dict[str, Any] = {"success": False, "error": None, "order_id": None}
@@ -433,31 +433,30 @@ def place_market_order(
             return result
         side_lower = side.lower() if side else "buy"
 
-        params: dict[str, Any] = {"leverage": leverage}
         if exchange.id == "kucoinfutures":
+            print(f"[DEBUG] KuCoin Setup: 'cross' (lower) | Order: Clean")
             try:
                 exchange.set_margin_mode("cross", sym)
             except Exception as e:
-                print(f"[DEBUG] Warning: Could not set margin mode (might already be set): {e}")
+                print(f"[DEBUG] Warning: set_margin_mode (might already set): {e}")
             try:
                 exchange.set_leverage(int(leverage), sym, params={"marginMode": "cross"})
             except Exception as e:
-                print(f"[DEBUG] Warning: Could not set leverage: {e}")
+                print(f"[DEBUG] Warning: set_leverage: {e}")
             time.sleep(3)
-            params = {}
-            print(f"[DEBUG] Placing CLEAN Cross-Margin Order (Relies on Account Settings)...")
+            params: dict[str, Any] = {}
             order = exchange.create_market_order(sym, side_lower, amount_base, params)
+
         elif exchange.id == "bybit":
             market = exchange.market(sym)
-            symbol_raw = market["id"]
             payload = {
                 "category": "linear",
-                "symbol": symbol_raw,
+                "symbol": market["id"],
                 "side": side_lower.capitalize(),
                 "orderType": "Market",
                 "qty": str(amount_base),
             }
-            print(f"[DEBUG] Bybit Raw Payload: {payload}")
+            print(f"[DEBUG] Bybit Raw V5 Payload: {payload}")
             raw_response = exchange.private_post_v5_order_create(payload)
             order = {
                 "id": raw_response["result"]["orderId"],
@@ -465,8 +464,11 @@ def place_market_order(
                 "status": "closed",
                 "info": raw_response,
             }
+
         else:
+            params = {"leverage": leverage}
             order = exchange.create_market_order(sym, side_lower, amount_base, params)
+
         print(f"[DEBUG] Exchange Response: {order}")
         print(f"✅ Order Placed! ID: {order.get('id')} | Status: {order.get('status')}")
         result["success"] = True
