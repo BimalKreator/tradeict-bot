@@ -443,6 +443,8 @@ def place_market_order(
             params["marginMode"] = "cross"
             print(f"[DEBUG] Placing Order with marginMode=cross...")
         order = exchange.create_market_order(sym, side_lower, amount_base, params)
+        print(f"[DEBUG] Exchange Response: {order}")
+        print(f"✅ Order Placed! ID: {order.get('id')} | Status: {order.get('status')}")
         result["success"] = True
         result["order_id"] = order.get("id") if isinstance(order, dict) else None
     except Exception as e:

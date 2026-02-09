@@ -110,11 +110,13 @@ class TradeExecutor:
         logs: list[str] = []
 
         # Step 1: Place order on KuCoin — amount = token quantity (no conversion)
+        print(f"--- STARTING TRADE: {symbol} ---")
         res_a = place_market_order("kucoin", symbol, kucoin_side, quantity, leverage)
         if not res_a.get("success"):
             logs.append(f"[KuCoin] Place order — FAILED: {res_a.get('error', 'Unknown')}")
             return {"success": False, "status": None, "message": f"KuCoin order failed: {res_a.get('error')}", "logs": logs}
         logs.append(f"[KuCoin] Place {kucoin_direction} order: {quantity} tokens, {leverage}x — OK")
+        print(f"Leg 1 (KuCoin) Done. Result: {res_a.get('order_id')}")
 
         # Step 2: Place order on Bybit — same token quantity
         exchange_b_ok = True
@@ -122,12 +124,14 @@ class TradeExecutor:
             logs.append("[Bybit] Place order — FAILED (simulated)")
             exchange_b_ok = False
         else:
+            print(f"Attempting Leg 2 (Bybit)...")
             res_b = place_market_order("bybit", symbol, bybit_side, quantity, leverage)
             if not res_b.get("success"):
                 logs.append(f"[Bybit] Place order — FAILED: {res_b.get('error', 'Unknown')}")
                 exchange_b_ok = False
             else:
                 logs.append(f"[Bybit] Place {bybit_direction} order: {quantity} tokens, {leverage}x — OK")
+                print(f"Leg 2 (Bybit) Done. Result: {res_b.get('order_id')}")
 
         if not exchange_b_ok:
             close_res = close_position("kucoin", symbol, kucoin_side, quantity)
