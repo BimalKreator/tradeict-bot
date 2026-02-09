@@ -33,7 +33,7 @@ def get_arbitrage_opportunities() -> list[dict[str, Any]]:
         print(f"[DEBUG] Checking {symbol}: KuCoin={kucoin_interval}h | Bybit={bybit_interval}h")
         # Strict interval matching: only pair when both have same funding interval (e.g. 8h vs 8h)
         if kucoin_interval is None or bybit_interval is None:
-            print(f"⚠️ MISSING DATA: {symbol} (KuCoin: {kucoin_interval}, Bybit: {bybit_interval})")
+            print(f"⚠️ MISSING DATA (skipped): {symbol} — KuCoin interval={kucoin_interval!r}, Bybit interval={bybit_interval!r} (no valid futures contract or interval)")
             continue
         if kucoin_interval != bybit_interval:
             print(f"❌ MISMATCH: {symbol} (Skipping)")

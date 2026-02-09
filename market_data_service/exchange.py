@@ -205,30 +205,39 @@ def _fetch_kucoin_intervals(exchange: ccxt.Exchange) -> dict[str, int]:
     return result
 
 
+def _get_valid_kucoin_futures_ids(exchange: ccxt.Exchange) -> set[str]:
+    """Single source of truth: contract IDs from KuCoin GET /api/v1/contracts/active."""
+    intervals = _fetch_kucoin_intervals(exchange)
+    return set(intervals.keys())
+
+
 def _fetch_kucoin() -> list[dict[str, Any]]:
-    """KuCoin futures: no fetch_funding_rates(), use fetch_funding_rate() per symbol (capped)."""
+    """KuCoin futures: only include symbols that exist in contracts/active (no string-based symbol construction)."""
     import time
     exchange = ccxt.kucoinfutures(_get_kucoin_config())
     exchange.load_markets()
     intervals_map = _fetch_kucoin_intervals(exchange)
+    valid_futures_ids = set(intervals_map.keys())
     symbols = _get_usdt_perp_symbols(exchange)[:KUCOIN_SYMBOL_LIMIT]
     result = []
     for sym in symbols:
         try:
+            m = exchange.markets.get(sym)
+            if not m:
+                continue
+            raw_id = m.get("id")
+            if raw_id is None or str(raw_id) not in valid_futures_ids:
+                print(f"[DEBUG] Skipping {sym} (market_id={raw_id}): not in KuCoin contracts/active")
+                continue
             data = exchange.fetch_funding_rate(sym)
             row = _row(data, sym)
             _enrich_contract_specs(row, exchange, sym, "kucoin")
-            # Override with intervals from GET /contracts/active (keyed by market id)
-            m = exchange.markets.get(sym)
-            if m and intervals_map:
-                raw_id = m.get("id")
-                if raw_id is not None:
-                    interval_h = intervals_map.get(str(raw_id))
-                    if interval_h is not None:
-                        row["funding_interval"] = interval_h
-                        print(f"--> {row['symbol']} kucoin Interval detected: {interval_h}h")
-                    else:
-                        row["funding_interval"] = None  # contract not in response; do not default to 8h
+            interval_h = intervals_map.get(str(raw_id))
+            if interval_h is not None:
+                row["funding_interval"] = interval_h
+                print(f"--> {row['symbol']} kucoin Interval detected: {interval_h}h")
+            else:
+                row["funding_interval"] = None
             result.append(row)
             iv = row.get("funding_interval")
             print(f"{row['symbol']} -> KuCoin Interval: {iv}h" if iv is not None else f"{row['symbol']} -> KuCoin Interval: None")
@@ -426,6 +435,7 @@ def place_market_order(
         exchange.load_markets()
         sym = _perp_symbol(exchange, normalized_symbol)
         if not sym:
+            print(f"[DEBUG] Symbol resolution failed: normalized={normalized_symbol!r} -> no perp symbol on exchange")
             result["error"] = f"Symbol {normalized_symbol} not found"
             return result
         if amount_base <= 0:
@@ -438,8 +448,15 @@ def place_market_order(
         print(f"[DEBUG] Applying User Leverage: {user_leverage}x | qty_str: {qty_str}")
 
         if exchange.id == "kucoinfutures":
-            print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id} (no create_market_order).")
             market = exchange.market(sym)
+            market_id = market.get("id")
+            valid_kucoin_ids = _get_valid_kucoin_futures_ids(exchange)
+            if market_id is None or str(market_id) not in valid_kucoin_ids:
+                print(f"[DEBUG] Invalid futures symbol: normalized={normalized_symbol!r} perp={sym!r} market_id={market_id!r} not in contracts/active")
+                result["error"] = f"Invalid futures symbol ({normalized_symbol}): not in KuCoin contracts/active. Aborting without rollback."
+                return result
+            print(f"[DEBUG] Symbol resolved: normalized={normalized_symbol!r} perp={sym!r} market_id={market_id!r}")
+            print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id} (no create_market_order).")
             try:
                 exchange.futuresprivate_post_position_changemarginmode(
                     {"symbol": market["id"], "marginMode": "CROSS"}
@@ -536,6 +553,13 @@ def close_position(
         if not sym:
             result["error"] = f"Symbol {normalized_symbol} not found"
             return result
+        if exchange.id == "kucoinfutures":
+            market = exchange.market(sym)
+            valid_kucoin_ids = _get_valid_kucoin_futures_ids(exchange)
+            if market.get("id") is None or str(market.get("id")) not in valid_kucoin_ids:
+                print(f"[DEBUG] close_position: invalid futures symbol {normalized_symbol!r} (market_id={market.get('id')!r})")
+                result["error"] = f"Invalid futures symbol ({normalized_symbol}): not in KuCoin contracts/active"
+                return result
         close_side = "sell" if (side or "").lower() == "buy" else "buy"
         params: dict[str, Any] = {"reduceOnly": True}
         if exchange.id == "kucoinfutures":
