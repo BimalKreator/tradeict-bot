@@ -448,22 +448,27 @@ def place_market_order(
             order = exchange.create_market_order(sym, side_lower, amount_base, params)
 
         elif exchange.id == "bybit":
-            market = exchange.market(sym)
-            payload = {
-                "category": "linear",
-                "symbol": market["id"],
-                "side": side_lower.capitalize(),
-                "orderType": "Market",
-                "qty": str(amount_base),
-            }
-            print(f"[DEBUG] Bybit Raw V5 Payload: {payload}")
-            raw_response = exchange.private_post_v5_order_create(payload)
-            order = {
-                "id": raw_response["result"]["orderId"],
-                "symbol": sym,
-                "status": "closed",
-                "info": raw_response,
-            }
+            try:
+                market = exchange.market(sym)
+                qty_str = exchange.amount_to_precision(sym, amount_base)
+                payload = {
+                    "category": "linear",
+                    "symbol": market["id"],
+                    "side": side_lower.capitalize(),
+                    "orderType": "Market",
+                    "qty": qty_str,
+                }
+                print(f"[DEBUG] Bybit Payload: {payload}")
+                raw_response = exchange.private_post_v5_order_create(payload)
+                order = {
+                    "id": raw_response["result"]["orderId"],
+                    "symbol": sym,
+                    "status": "closed",
+                    "info": raw_response,
+                }
+            except Exception as e:
+                print(f"[ERROR] Bybit Failed: {e}")
+                raise
 
         else:
             params = {"leverage": leverage}
