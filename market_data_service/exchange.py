@@ -436,11 +436,11 @@ def place_market_order(
         params: dict[str, Any] = {"leverage": leverage}
         if exchange.id == "kucoinfutures":
             try:
-                exchange.set_margin_mode("CROSS", sym)
+                exchange.set_margin_mode("cross", sym)
             except Exception as e:
                 print(f"[DEBUG] Warning: Could not set margin mode (might already be set): {e}")
             try:
-                exchange.set_leverage(int(leverage), sym)
+                exchange.set_leverage(int(leverage), sym, params={"marginMode": "cross"})
             except Exception as e:
                 print(f"[DEBUG] Warning: Could not set leverage: {e}")
             time.sleep(3)
