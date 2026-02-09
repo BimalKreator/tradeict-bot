@@ -441,30 +441,43 @@ def place_market_order(
         print(f"[DEBUG] Applying User Leverage: {user_leverage}x")
 
         if exchange.id == "kucoinfutures":
-            # 1. Gatekeeper: validate symbol and get official symbol_id
+            # Step 1: Fetch LIVE contracts list (GET /api/v1/contracts/active) — authoritative
+            response = exchange.futurespublic_get_contracts_active()
+            active_contracts = response.get("data") if isinstance(response, dict) else None
+            if not isinstance(active_contracts, list):
+                result["error"] = "KuCoin: failed to fetch active contracts list."
+                return result
+
+            # Step 2: Find target symbol in active contracts
             target_base = normalized_symbol.split("/")[0] if "/" in normalized_symbol else normalized_symbol
-            found_market = None
-            for m in exchange.markets.values():
-                if not isinstance(m, dict):
+            symbol_id: str | None = None
+            for contract in active_contracts:
+                if not isinstance(contract, dict):
                     continue
                 if (
-                    m.get("base") == target_base
-                    and m.get("quote") == "USDT"
-                    and m.get("swap") is True
-                    and m.get("active", True) is not False
+                    contract.get("baseCurrency") == target_base
+                    and contract.get("quoteCurrency") == "USDT"
+                    and contract.get("status") == "Open"
                 ):
-                    found_market = m
+                    symbol_id = contract.get("symbol")
                     break
-            if not found_market:
-                print(f"[WARN] Skipping {normalized_symbol}: Not tradable on KuCoin Futures.")
-                result["error"] = f"{normalized_symbol} is not in the active KuCoin Futures list. Trade skipped."
+            if not symbol_id:
+                print(f"[WARN] Skipping {normalized_symbol}: Not found in KuCoin Active Futures list.")
+                result["error"] = f"{normalized_symbol} is not in the KuCoin Active Futures list. Trade skipped."
                 return result
-            sym = found_market["symbol"]
-            symbol_id = found_market["id"]
-            qty_str = exchange.amount_to_precision(sym, amount_base)
-            print(f"[DEBUG] KuCoin gatekeeper: using real id {symbol_id!r}")
+            print(f"[DEBUG] KuCoin strict validator: live symbol_id={symbol_id!r}")
 
-            # Setup (margin, leverage) on main connection
+            # Resolve CCXT symbol for amount precision (market keyed by id)
+            sym = None
+            for _s, m in exchange.markets.items():
+                if isinstance(m, dict) and m.get("id") == symbol_id:
+                    sym = _s
+                    break
+            if not sym:
+                sym = f"{target_base}/USDT:USDT"
+            qty_str = exchange.amount_to_precision(sym, amount_base)
+
+            # Step 3: Setup (margin, leverage) then execute — Pure Raw API
             try:
                 exchange.futuresprivate_post_position_changemarginmode(
                     {"symbol": symbol_id, "marginMode": "CROSS"}
@@ -488,84 +501,18 @@ def place_market_order(
                 "size": qty_str,
             }
             print(f"[DEBUG] KuCoin RAW order payload (no marginMode/leverage): {payload}")
-            print(f"[DEBUG] Corrected Method: private_post_orders")
-
-            # 2. Execution loop: main connection first, then fresh instance on 900001
-            order: dict[str, Any] | None = None
-            for attempt in range(2):
-                if attempt == 0:
-                    print(f"[DEBUG] Executing via Main Connection")
-                    try:
-                        raw_response = exchange.private_post_orders(payload)
-                        order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
-                        order = {
-                            "id": order_id,
-                            "symbol": sym,
-                            "status": "closed",
-                            "info": raw_response,
-                        }
-                        break
-                    except Exception as e:
-                        # KuCoin 900001 = "Trading pair does not exist" (stale connection); retry with fresh instance
-                        err_str = str(e)
-                        is_900001 = (
-                            "900001" in err_str
-                            or (getattr(e, "code", None) is not None and str(getattr(e, "code")) == "900001")
-                        )
-                        if is_900001:
-                            print(f"[WARN] Error 900001 on main connection. Switching to FRESH connection...")
-                            continue
-                        raise
-                else:
-                    print(f"[DEBUG] Executing via Fresh Connection")
-                    temp_config = _get_kucoin_config()
-                    temp_exchange = ccxt.kucoinfutures(temp_config)
-                    try:
-                        temp_exchange.load_markets()
-                        # Re-resolve symbol from fresh markets (avoids stale symbol_id)
-                        found = None
-                        for m in temp_exchange.markets.values():
-                            if not isinstance(m, dict):
-                                continue
-                            if (
-                                m.get("base") == target_base
-                                and m.get("quote") == "USDT"
-                                and m.get("swap") is True
-                                and m.get("active", True) is not False
-                            ):
-                                found = m
-                                break
-                        if not found:
-                            result["error"] = f"{normalized_symbol} not in KuCoin Futures (fresh). Trade skipped."
-                            break
-                        sym_fresh = found["symbol"]
-                        symbol_id_fresh = found["id"]
-                        qty_fresh = temp_exchange.amount_to_precision(sym_fresh, amount_base)
-                        payload_fresh = {
-                            "clientOid": temp_exchange.uuid(),
-                            "side": side_lower,
-                            "symbol": symbol_id_fresh,
-                            "type": "market",
-                            "size": qty_fresh,
-                        }
-                        raw_response = temp_exchange.private_post_orders(payload_fresh)
-                        order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
-                        order = {
-                            "id": order_id,
-                            "symbol": sym_fresh,
-                            "status": "closed",
-                            "info": raw_response,
-                        }
-                    except Exception as e2:
-                        logger.warning("Fresh connection order failed: %s", e2)
-                        result["error"] = str(e2)
-                    finally:
-                        if hasattr(temp_exchange, "close"):
-                            temp_exchange.close()
-                    break
-
-            if order is None:
-                result["error"] = result.get("error") or "KuCoin order failed after retry (symbol rejected)."
+            try:
+                raw_response = exchange.private_post_orders(payload)
+                order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
+                order = {
+                    "id": order_id,
+                    "symbol": sym,
+                    "status": "closed",
+                    "info": raw_response,
+                }
+            except Exception as e:
+                logger.warning("KuCoin order failed: %s", e)
+                result["error"] = str(e)
                 return result
 
         elif exchange.id == "bybit":
