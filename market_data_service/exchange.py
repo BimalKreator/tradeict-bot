@@ -434,13 +434,14 @@ def place_market_order(
                 exchange.set_margin_mode("cross", sym)
             except Exception as e:
                 print(f"[DEBUG] Warning: Could not set margin mode (might already be set): {e}")
+            print(f"[DEBUG] Setting Leverage with marginMode=cross...")
             try:
-                exchange.set_leverage(int(leverage), sym)
+                exchange.set_leverage(int(leverage), sym, params={"marginMode": "cross"})
             except Exception as e:
                 print(f"[DEBUG] Warning: Could not set leverage: {e}")
             time.sleep(0.5)
-            params = {}
-            print(f"[DEBUG] Step 4: Placing CLEAN order (no marginMode param)...")
+            params["marginMode"] = "cross"
+            print(f"[DEBUG] Placing Order with marginMode=cross...")
         order = exchange.create_market_order(sym, side_lower, amount_base, params)
         result["success"] = True
         result["order_id"] = order.get("id") if isinstance(order, dict) else None
