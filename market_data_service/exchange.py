@@ -505,10 +505,20 @@ def place_market_order(
                             "info": raw_response,
                         }
                         break
-                    except ccxt.ExchangeError as e:
+                    except Exception as e:
                         err_str = str(e).lower()
-                        code_str = str(getattr(e, "code", None) or getattr(e, "error", None) or "")
-                        if code_str == "900001" or "900001" in err_str or "symbol" in err_str or "does not exist" in err_str:
+                        code_val = getattr(e, "code", None) or getattr(e, "error", None)
+                        if code_val is not None and hasattr(code_val, "__str__"):
+                            code_str = str(code_val)
+                        else:
+                            code_str = ""
+                        # KuCoin 900001 = "Trading pair does not exist" (stale connection); retry with fresh instance
+                        if (
+                            code_str == "900001"
+                            or "900001" in err_str
+                            or "trading pair" in err_str
+                            and "does not exist" in err_str
+                        ):
                             print(f"[WARN] Error 900001 on main connection. Switching to FRESH connection...")
                             continue
                         raise
