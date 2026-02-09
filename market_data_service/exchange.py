@@ -6,6 +6,7 @@ Normalizes symbols to BASE/USDT (e.g. BTC/USDT).
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -407,7 +408,7 @@ def place_market_order(
     leverage: int,
 ) -> dict[str, Any]:
     """
-    Place a market order. Respects user leverage/quantity; forces Cross via Raw API on KuCoin.
+    Place a market order. KuCoin: PURE RAW API only (no create_order). Bybit: Raw V5.
     Returns { "success": bool, "error": str | None, "order_id": str | None }.
     """
     result: dict[str, Any] = {"success": False, "error": None, "order_id": None}
@@ -433,11 +434,11 @@ def place_market_order(
         side_lower = side.lower() if side else "buy"
 
         user_leverage = int(leverage) if leverage is not None and leverage > 0 else 1
-        quantity = amount_base
-        print(f"[DEBUG] Applying User Leverage: {user_leverage}x | Quantity: {quantity}")
+        qty_str = exchange.amount_to_precision(sym, amount_base)
+        print(f"[DEBUG] Applying User Leverage: {user_leverage}x | qty_str: {qty_str}")
 
         if exchange.id == "kucoinfutures":
-            print(f"[DEBUG] KuCoin: Forcing Cross Mode (Raw API).")
+            print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id} (no create_market_order).")
             market = exchange.market(sym)
             try:
                 exchange.futuresprivate_post_position_changemarginmode(
@@ -453,14 +454,29 @@ def place_market_order(
             except Exception as e:
                 print(f"[DEBUG] Setup leverage failed (continue anyway): {e}")
             time.sleep(2)
-            order_params: dict[str, Any] = {}
-            print(f"[DEBUG] Placing clean order (params={{}}, no leverage/marginMode in payload).")
-            order = exchange.create_market_order(sym, side_lower, quantity, order_params)
+            client_oid = getattr(exchange, "uuid", lambda: uuid.uuid4().hex)()
+            if isinstance(client_oid, str) and "-" in client_oid:
+                client_oid = client_oid.replace("-", "")
+            payload = {
+                "clientOid": client_oid,
+                "side": side_lower,
+                "symbol": market["id"],
+                "type": "market",
+                "size": qty_str,
+            }
+            print(f"[DEBUG] KuCoin RAW order payload (no marginMode/leverage): {payload}")
+            raw_response = exchange.futuresprivate_post_orders(payload)
+            order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
+            order = {
+                "id": order_id,
+                "symbol": sym,
+                "status": "closed",
+                "info": raw_response,
+            }
 
         elif exchange.id == "bybit":
-            print(f"[DEBUG] Bybit: Raw V5 order, fixed quantity precision.")
+            print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id}.")
             market = exchange.market(sym)
-            qty_str = exchange.amount_to_precision(sym, quantity)
             payload = {
                 "category": "linear",
                 "symbol": market["id"],
@@ -480,7 +496,7 @@ def place_market_order(
 
         else:
             order = exchange.create_market_order(
-                sym, side_lower, quantity, {"leverage": user_leverage}
+                sym, side_lower, amount_base, {"leverage": user_leverage}
             )
 
         print(f"[DEBUG] Exchange Response: {order}")
