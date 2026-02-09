@@ -454,18 +454,16 @@ def place_market_order(
             except Exception as e:
                 print(f"[DEBUG] Setup leverage failed (continue anyway): {e}")
             time.sleep(2)
-            client_oid = getattr(exchange, "uuid", lambda: uuid.uuid4().hex)()
-            if isinstance(client_oid, str) and "-" in client_oid:
-                client_oid = client_oid.replace("-", "")
             payload = {
-                "clientOid": client_oid,
+                "clientOid": exchange.uuid(),
                 "side": side_lower,
                 "symbol": market["id"],
                 "type": "market",
                 "size": qty_str,
             }
             print(f"[DEBUG] KuCoin RAW order payload (no marginMode/leverage): {payload}")
-            raw_response = exchange.futuresprivate_post_orders(payload)
+            print(f"[DEBUG] Corrected Method: private_post_orders")
+            raw_response = exchange.private_post_orders(payload)
             order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
             order = {
                 "id": order_id,
