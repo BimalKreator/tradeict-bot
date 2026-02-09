@@ -407,8 +407,7 @@ def place_market_order(
     leverage: int,
 ) -> dict[str, Any]:
     """
-    Place a market order on the given exchange (futures).
-    Uses Raw API for setup/execution where CCXT high-level wrappers fail.
+    Place a market order. Ignores frontend params; forces correct settings via Raw API.
     Returns { "success": bool, "error": str | None, "order_id": str | None }.
     """
     result: dict[str, Any] = {"success": False, "error": None, "order_id": None}
@@ -434,26 +433,27 @@ def place_market_order(
         side_lower = side.lower() if side else "buy"
 
         if exchange.id == "kucoinfutures":
-            print(f"[DEBUG] Raw API Mode: KuCoin")
+            print(f"[DEBUG] KuCoin: Forcing Cross Mode (Raw API), ignoring frontend params.")
             market = exchange.market(sym)
             try:
                 exchange.futuresprivate_post_position_changemarginmode(
                     {"symbol": market["id"], "marginMode": "CROSS"}
                 )
+                print(f"[DEBUG] Cross mode set OK.")
             except Exception as e:
-                print(f"[DEBUG] Raw setup marginMode (ignore if set): {e}")
+                print(f"[DEBUG] Setup marginMode failed (continue anyway): {e}")
             try:
                 exchange.private_post_position_update_user_leverage(
                     {"symbol": market["id"], "leverage": str(leverage)}
                 )
             except Exception as e:
-                print(f"[DEBUG] Raw setup leverage (ignore if set): {e}")
+                print(f"[DEBUG] Setup leverage failed (continue anyway): {e}")
             time.sleep(2)
-            print(f"[DEBUG] KuCoin Clean Order (params={{}})")
+            print(f"[DEBUG] Placing clean order (params={{}}).")
             order = exchange.create_market_order(sym, side_lower, amount_base, {})
 
         elif exchange.id == "bybit":
-            print(f"[DEBUG] Raw API Mode: Bybit")
+            print(f"[DEBUG] Bybit: Raw V5 order, fixed quantity precision.")
             market = exchange.market(sym)
             qty_str = exchange.amount_to_precision(sym, amount_base)
             payload = {
