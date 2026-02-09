@@ -426,15 +426,19 @@ def place_market_order(
             result["error"] = "Amount must be positive"
             return result
         side_lower = side.lower() if side else "buy"
+
         params: dict[str, Any] = {"leverage": leverage}
         if exchange.id == "kucoinfutures":
+            print(f"[DEBUG] Step 1: Force switching {sym} to CROSS margin...")
             try:
                 exchange.set_margin_mode("cross", sym)
-                print(f"✅ Switched {sym} to Cross Margin on KuCoin")
+                print(f"[DEBUG] Step 2: Switch success. Waiting for sync...")
             except Exception as e:
-                print(f"⚠️ Margin Mode Set Info: {e}")
-            time.sleep(0.5)
+                print(f"[DEBUG] Warning: Could not set margin mode (might already be set): {e}")
+            time.sleep(1.0)
             params["marginMode"] = "cross"
+            print(f"[DEBUG] Step 3: Placing order with params: {params}")
+
         order = exchange.create_market_order(sym, side_lower, amount_base, params)
         result["success"] = True
         result["order_id"] = order.get("id") if isinstance(order, dict) else None
