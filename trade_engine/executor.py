@@ -149,10 +149,11 @@ class TradeExecutor:
                 bybit_entry_price=bybit_price,
                 status="FAILED_ROLLBACK",
             )
+            bybit_err = res_b.get("error", "Unknown") if not simulate_failure else "simulated"
             return {
                 "success": False,
                 "status": "FAILED_ROLLBACK",
-                "message": "Trade Failed! First Order Rolled Back.",
+                "message": f"Trade Failed! First Order Rolled Back. Bybit: {bybit_err}",
                 "logs": logs,
             }
 

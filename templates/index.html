@@ -963,7 +963,7 @@
             if (res.success) {
               alert('Trade Successful \u2705');
             } else {
-              alert('Trade Failed! First Order Rolled Back \u26a0\ufe0f');
+              alert(res.message || 'Trade failed \u26a0\ufe0f');
             }
             if (window.fetchRecentTrades) window.fetchRecentTrades();
           })
