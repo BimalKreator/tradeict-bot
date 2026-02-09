@@ -31,8 +31,14 @@ def _get_kucoin_config() -> dict[str, Any]:
 
 
 def _get_bybit_config() -> dict[str, Any]:
-    """Build Bybit config from env (linear = USDT perpetual). Uses API keys if set."""
-    config: dict[str, Any] = {"options": {"defaultType": "linear"}}
+    """Build Bybit config from env. UTA (Unified Trading Account) options for correct V5 API and parsing."""
+    config: dict[str, Any] = {
+        "options": {
+            "defaultType": "swap",
+            "enableUnifiedMargin": True,
+            "enableUnifiedAccount": True,
+        }
+    }
     api_key = os.environ.get("BYBIT_API_KEY", "").strip()
     secret = os.environ.get("BYBIT_SECRET", "").strip()
     if api_key and secret:
@@ -440,7 +446,27 @@ def place_market_order(
             time.sleep(3)
             params = {}
             print(f"[DEBUG] Placing CLEAN Cross-Margin Order (Relies on Account Settings)...")
-        order = exchange.create_market_order(sym, side_lower, amount_base, params)
+            order = exchange.create_market_order(sym, side_lower, amount_base, params)
+        elif exchange.id == "bybit":
+            market = exchange.market(sym)
+            symbol_raw = market["id"]
+            payload = {
+                "category": "linear",
+                "symbol": symbol_raw,
+                "side": side_lower.capitalize(),
+                "orderType": "Market",
+                "qty": str(amount_base),
+            }
+            print(f"[DEBUG] Bybit Raw Payload: {payload}")
+            raw_response = exchange.private_post_v5_order_create(payload)
+            order = {
+                "id": raw_response["result"]["orderId"],
+                "symbol": sym,
+                "status": "closed",
+                "info": raw_response,
+            }
+        else:
+            order = exchange.create_market_order(sym, side_lower, amount_base, params)
         print(f"[DEBUG] Exchange Response: {order}")
         print(f"✅ Order Placed! ID: {order.get('id')} | Status: {order.get('status')}")
         result["success"] = True
