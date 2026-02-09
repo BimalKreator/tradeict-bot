@@ -408,7 +408,7 @@ def place_market_order(
 ) -> dict[str, Any]:
     """
     Place a market order on the given exchange (futures).
-    side: 'buy' or 'sell'. amount_base: order size in tokens (base currency).
+    Uses Raw API for setup/execution where CCXT high-level wrappers fail.
     Returns { "success": bool, "error": str | None, "order_id": str | None }.
     """
     result: dict[str, Any] = {"success": False, "error": None, "order_id": None}
@@ -434,45 +434,49 @@ def place_market_order(
         side_lower = side.lower() if side else "buy"
 
         if exchange.id == "kucoinfutures":
-            print(f"[DEBUG] KuCoin Setup: 'cross' (lower) | Order: Clean")
+            print(f"[DEBUG] Raw API Mode: KuCoin")
+            market = exchange.market(sym)
             try:
-                exchange.set_margin_mode("cross", sym)
+                exchange.futuresprivate_post_position_changemarginmode(
+                    {"symbol": market["id"], "marginMode": "CROSS"}
+                )
             except Exception as e:
-                print(f"[DEBUG] Warning: set_margin_mode (might already set): {e}")
+                print(f"[DEBUG] Raw setup marginMode (ignore if set): {e}")
             try:
-                exchange.set_leverage(int(leverage), sym, params={"marginMode": "cross"})
+                exchange.private_post_position_update_user_leverage(
+                    {"symbol": market["id"], "leverage": str(leverage)}
+                )
             except Exception as e:
-                print(f"[DEBUG] Warning: set_leverage: {e}")
-            time.sleep(3)
-            params: dict[str, Any] = {}
-            order = exchange.create_market_order(sym, side_lower, amount_base, params)
+                print(f"[DEBUG] Raw setup leverage (ignore if set): {e}")
+            time.sleep(2)
+            print(f"[DEBUG] KuCoin Clean Order (params={{}})")
+            order = exchange.create_market_order(sym, side_lower, amount_base, {})
 
         elif exchange.id == "bybit":
-            try:
-                market = exchange.market(sym)
-                qty_str = exchange.amount_to_precision(sym, amount_base)
-                payload = {
-                    "category": "linear",
-                    "symbol": market["id"],
-                    "side": side_lower.capitalize(),
-                    "orderType": "Market",
-                    "qty": qty_str,
-                }
-                print(f"[DEBUG] Bybit Payload: {payload}")
-                raw_response = exchange.private_post_v5_order_create(payload)
-                order = {
-                    "id": raw_response["result"]["orderId"],
-                    "symbol": sym,
-                    "status": "closed",
-                    "info": raw_response,
-                }
-            except Exception as e:
-                print(f"[ERROR] Bybit Failed: {e}")
-                raise
+            print(f"[DEBUG] Raw API Mode: Bybit")
+            market = exchange.market(sym)
+            qty_str = exchange.amount_to_precision(sym, amount_base)
+            payload = {
+                "category": "linear",
+                "symbol": market["id"],
+                "side": side_lower.capitalize(),
+                "orderType": "Market",
+                "qty": qty_str,
+                "positionIdx": 0,
+            }
+            print(f"[DEBUG] Bybit Payload: {payload}")
+            raw_response = exchange.private_post_v5_order_create(payload)
+            order = {
+                "id": raw_response["result"]["orderId"],
+                "symbol": sym,
+                "status": "closed",
+                "info": raw_response,
+            }
 
         else:
-            params = {"leverage": leverage}
-            order = exchange.create_market_order(sym, side_lower, amount_base, params)
+            order = exchange.create_market_order(
+                sym, side_lower, amount_base, {"leverage": leverage}
+            )
 
         print(f"[DEBUG] Exchange Response: {order}")
         print(f"✅ Order Placed! ID: {order.get('id')} | Status: {order.get('status')}")
