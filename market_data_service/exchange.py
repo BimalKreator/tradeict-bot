@@ -506,19 +506,13 @@ def place_market_order(
                         }
                         break
                     except Exception as e:
-                        err_str = str(e).lower()
-                        code_val = getattr(e, "code", None) or getattr(e, "error", None)
-                        if code_val is not None and hasattr(code_val, "__str__"):
-                            code_str = str(code_val)
-                        else:
-                            code_str = ""
                         # KuCoin 900001 = "Trading pair does not exist" (stale connection); retry with fresh instance
-                        if (
-                            code_str == "900001"
-                            or "900001" in err_str
-                            or "trading pair" in err_str
-                            and "does not exist" in err_str
-                        ):
+                        err_str = str(e)
+                        is_900001 = (
+                            "900001" in err_str
+                            or (getattr(e, "code", None) is not None and str(getattr(e, "code")) == "900001")
+                        )
+                        if is_900001:
                             print(f"[WARN] Error 900001 on main connection. Switching to FRESH connection...")
                             continue
                         raise
@@ -527,23 +521,51 @@ def place_market_order(
                     temp_config = _get_kucoin_config()
                     temp_exchange = ccxt.kucoinfutures(temp_config)
                     try:
-                        # New clientOid for fresh attempt
-                        payload["clientOid"] = temp_exchange.uuid()
-                        raw_response = temp_exchange.private_post_orders(payload)
+                        temp_exchange.load_markets()
+                        # Re-resolve symbol from fresh markets (avoids stale symbol_id)
+                        found = None
+                        for m in temp_exchange.markets.values():
+                            if not isinstance(m, dict):
+                                continue
+                            if (
+                                m.get("base") == target_base
+                                and m.get("quote") == "USDT"
+                                and m.get("swap") is True
+                                and m.get("active", True) is not False
+                            ):
+                                found = m
+                                break
+                        if not found:
+                            result["error"] = f"{normalized_symbol} not in KuCoin Futures (fresh). Trade skipped."
+                            break
+                        sym_fresh = found["symbol"]
+                        symbol_id_fresh = found["id"]
+                        qty_fresh = temp_exchange.amount_to_precision(sym_fresh, amount_base)
+                        payload_fresh = {
+                            "clientOid": temp_exchange.uuid(),
+                            "side": side_lower,
+                            "symbol": symbol_id_fresh,
+                            "type": "market",
+                            "size": qty_fresh,
+                        }
+                        raw_response = temp_exchange.private_post_orders(payload_fresh)
                         order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
                         order = {
                             "id": order_id,
-                            "symbol": sym,
+                            "symbol": sym_fresh,
                             "status": "closed",
                             "info": raw_response,
                         }
+                    except Exception as e2:
+                        logger.warning("Fresh connection order failed: %s", e2)
+                        result["error"] = str(e2)
                     finally:
                         if hasattr(temp_exchange, "close"):
                             temp_exchange.close()
                     break
 
             if order is None:
-                result["error"] = "KuCoin order failed after retry (symbol rejected)."
+                result["error"] = result.get("error") or "KuCoin order failed after retry (symbol rejected)."
                 return result
 
         elif exchange.id == "bybit":
