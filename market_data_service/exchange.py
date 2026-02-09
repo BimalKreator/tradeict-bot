@@ -433,9 +433,8 @@ def place_market_order(
                 print(f"✅ Switched {sym} to Cross Margin on KuCoin")
             except Exception as e:
                 print(f"⚠️ Margin Mode Set Info: {e}")
-            time.sleep(0.2)
-            if "marginMode" in params:
-                del params["marginMode"]
+            time.sleep(0.5)
+            params["marginMode"] = "cross"
         order = exchange.create_market_order(sym, side_lower, amount_base, params)
         result["success"] = True
         result["order_id"] = order.get("id") if isinstance(order, dict) else None
