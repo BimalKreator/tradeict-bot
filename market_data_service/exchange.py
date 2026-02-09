@@ -438,63 +438,81 @@ def place_market_order(
             return result
         side_lower = side.lower() if side else "buy"
         user_leverage = int(leverage) if leverage is not None and leverage > 0 else 1
+        print(f"[DEBUG] Applying User Leverage: {user_leverage}x")
 
         if exchange.id == "kucoinfutures":
-            # Gatekeeper: ask KuCoin's loaded markets — is this token in the active futures list?
-            target_base = normalized_symbol.split("/")[0] if "/" in normalized_symbol else normalized_symbol
-            found_market = None
-            for m in exchange.markets.values():
-                if not isinstance(m, dict):
-                    continue
-                if (
-                    m.get("base") == target_base
-                    and m.get("quote") == "USDT"
-                    and m.get("swap") is True
-                    and m.get("active", True) is not False
-                ):
-                    found_market = m
+            order: dict[str, Any] | None = None
+            for attempt in range(2):
+                if attempt == 1:
+                    print(f"[DEBUG] Retry (attempt 2): reloading markets...")
+                    exchange.load_markets(reload=True)
+                target_base = normalized_symbol.split("/")[0] if "/" in normalized_symbol else normalized_symbol
+                found_market = None
+                for m in exchange.markets.values():
+                    if not isinstance(m, dict):
+                        continue
+                    if (
+                        m.get("base") == target_base
+                        and m.get("quote") == "USDT"
+                        and m.get("swap") is True
+                        and m.get("active", True) is not False
+                    ):
+                        found_market = m
+                        break
+                if not found_market:
+                    print(f"[WARN] Skipping {normalized_symbol}: Not tradable on KuCoin Futures.")
+                    result["error"] = f"{normalized_symbol} is not in the active KuCoin Futures list. Trade skipped."
+                    return result
+                sym = found_market["symbol"]
+                symbol_id = found_market["id"]
+                qty_str = exchange.amount_to_precision(sym, amount_base)
+                print(f"[DEBUG] KuCoin gatekeeper: using real id {symbol_id!r} (attempt {attempt + 1})")
+                print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id} (no create_market_order).")
+                try:
+                    exchange.futuresprivate_post_position_changemarginmode(
+                        {"symbol": symbol_id, "marginMode": "CROSS"}
+                    )
+                    print(f"[DEBUG] Cross mode set OK.")
+                except Exception as e:
+                    print(f"[DEBUG] Setup marginMode failed (continue anyway): {e}")
+                try:
+                    exchange.private_post_position_update_user_leverage(
+                        {"symbol": symbol_id, "leverage": str(user_leverage)}
+                    )
+                except Exception as e:
+                    print(f"[DEBUG] Setup leverage failed (continue anyway): {e}")
+                time.sleep(2)
+                payload = {
+                    "clientOid": exchange.uuid(),
+                    "side": side_lower,
+                    "symbol": symbol_id,
+                    "type": "market",
+                    "size": qty_str,
+                }
+                print(f"[DEBUG] KuCoin RAW order payload (no marginMode/leverage): {payload}")
+                print(f"[DEBUG] Corrected Method: private_post_orders")
+                try:
+                    raw_response = exchange.private_post_orders(payload)
+                    order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
+                    order = {
+                        "id": order_id,
+                        "symbol": sym,
+                        "status": "closed",
+                        "info": raw_response,
+                    }
                     break
-            if not found_market:
-                print(f"[WARN] Skipping {normalized_symbol}: Not tradable on KuCoin Futures.")
-                result["error"] = f"{normalized_symbol} is not in the active KuCoin Futures list. Trade skipped."
+                except ccxt.ExchangeError as e:
+                    err_str = str(e).lower()
+                    code = getattr(e, "code", None) or getattr(e, "error", None)
+                    if code == "900001" or "900001" in err_str or "symbol" in err_str or "does not exist" in err_str:
+                        print(f"[WARN] Error 900001 / symbol rejected. Force reloading markets & retrying...")
+                        if attempt == 1:
+                            raise
+                        continue
+                    raise
+            if order is None:
+                result["error"] = "KuCoin order failed after retry (symbol rejected)."
                 return result
-            sym = found_market["symbol"]
-            symbol_id = found_market["id"]
-            qty_str = exchange.amount_to_precision(sym, amount_base)
-            print(f"[DEBUG] Applying User Leverage: {user_leverage}x | qty_str: {qty_str}")
-            print(f"[DEBUG] KuCoin gatekeeper: using real id {symbol_id!r}")
-            print(f"[DEBUG] PURE RAW EXECUTION for {exchange.id} (no create_market_order).")
-            try:
-                exchange.futuresprivate_post_position_changemarginmode(
-                    {"symbol": symbol_id, "marginMode": "CROSS"}
-                )
-                print(f"[DEBUG] Cross mode set OK.")
-            except Exception as e:
-                print(f"[DEBUG] Setup marginMode failed (continue anyway): {e}")
-            try:
-                exchange.private_post_position_update_user_leverage(
-                    {"symbol": symbol_id, "leverage": str(user_leverage)}
-                )
-            except Exception as e:
-                print(f"[DEBUG] Setup leverage failed (continue anyway): {e}")
-            time.sleep(2)
-            payload = {
-                "clientOid": exchange.uuid(),
-                "side": side_lower,
-                "symbol": symbol_id,
-                "type": "market",
-                "size": qty_str,
-            }
-            print(f"[DEBUG] KuCoin RAW order payload (no marginMode/leverage): {payload}")
-            print(f"[DEBUG] Corrected Method: private_post_orders")
-            raw_response = exchange.private_post_orders(payload)
-            order_id = (raw_response.get("data") or {}).get("orderId") or raw_response.get("orderId")
-            order = {
-                "id": order_id,
-                "symbol": sym,
-                "status": "closed",
-                "info": raw_response,
-            }
 
         elif exchange.id == "bybit":
             sym = _perp_symbol(exchange, normalized_symbol)
